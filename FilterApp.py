@@ -7,9 +7,10 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle
 import numpy as np
+from scipy import signal
 from scipy.signal import zpk2tf, sosfreqz, sos2tf, tf2sos   # Used to convert zeros, poles, and gain to transfer function ,
 import matplotlib.pyplot as plt
-from PyQt5.QtCore import Qt, QSize
+from PyQt5.QtCore import Qt, QSize, QEvent
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
     NavigationToolbar2QT as NavigationToolbar
@@ -21,6 +22,7 @@ from collections import deque
 import time
 import pyqtgraph as pg
 pg.setConfigOptions(antialias=True)
+import pandas as pd
 
 
 # Dark theme colors
@@ -59,7 +61,7 @@ class FilterDesignApp(QMainWindow):
         # Setup undo/redo
         self.history = []
         self.history_index = -1
-
+        self.is_drawing = True
         self.dragging = False
         self.drag_target = None
         self.drag_type = None
@@ -108,9 +110,8 @@ class FilterDesignApp(QMainWindow):
         self.setup_filter_design_tab()
         self.setup_real_time_tab()
         
-        
-        
-        
+        self.last_x = None
+        self.current_y = 0        
         
         # Initialize signal processing variables
         from collections import deque
@@ -808,22 +809,25 @@ class FilterDesignApp(QMainWindow):
         toolbar.addAction(redo_action)
         
         # Filter library dropdown
-        filter_combo = QComboBox()
-        filter_combo.addItems([
-            "Butterworth LPF",
-            "Chebyshev LPF",
-            "Elliptic LPF",
-            "Butterworth HPF",
-            "Chebyshev HPF",
-            "Elliptic HPF",
-            "Bessel LPF",
-            "Bessel HPF",
-            "Gaussian LPF",
-            "Notch Filter"
-
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItems([
+            "Butterworth Highpass",
+            "Butterworth Lowpass",
+            "Butterworth Bandpass",
+            "Chebyshev I Lowpass",
+            "Chebyshev I Highpass",
+            "Chebyshev I Bandpass",
+            "Chebyshev II Lowpass",
+            "Chebyshev II Highpass",
+            "Chebyshev II Bandpass",
+            "Bessel Lowpass",
+            "Bessel Highpass",
+            "Elliptic Lowpass",
+            "Elliptic Highpass",
+            "Elliptic Bandpass"
         ])
-        filter_combo.currentTextChanged.connect(self.load_preset_filter)
-        toolbar.addWidget(filter_combo)
+        self.filter_combo.currentTextChanged.connect(self.apply_filter)
+        toolbar.addWidget(self.filter_combo)
 
     # def load_preset_filter(self, filter_name):
     #     if filter_name == "Butterworth LPF":
@@ -1174,46 +1178,54 @@ class FilterDesignApp(QMainWindow):
                                     maxlen=value*10)
     
     def process_next_sample(self):
-        """Process next sample with length checking"""
-        if not self.input_signal:
-            return
-            
-        try:
-            x = self.input_signal[-1]
-            y = self.apply_selected_filter(x)
-            
-            # Maintain equal buffer lengths
-            self.output_signal.append(float(y))
-            while len(self.output_signal) > len(self.input_signal):
-                self.output_signal.popleft()
+        if self.is_drawing:
+            """Process next sample with length checking"""
+            if not self.input_signal:
+                return
                 
-            # Update visualization periodically
-            if len(self.input_signal) % 10 == 0:
-                self.update_signal_plots()
+            try:
                 
-        except Exception as e:
-            print(f"Error processing sample: {e}")
+                    x = self.input_signal[-1]
+                    y = self.apply_selected_filter(x)
+                    
+                    # Maintain equal buffer lengths
+                    self.output_signal.append(float(y))
+                    while len(self.output_signal) > len(self.input_signal):
+                        self.output_signal.popleft()
+                        
+                    # Update visualization periodically
+                    if len(self.input_signal) % 10 == 0:
+                        self.update_signal_plots()
+                    
+            except Exception as e:
+                print(f"Error processing sample: {e}")
 
 
     def on_mouse_draw(self, event):
-        """Handle mouse movement in drawing area to generate input signal"""
-        if not hasattr(self, 'last_y'):
-            self.last_y = event.y()
-            return
-                
-        # Calculate vertical displacement for frequency
-        dy = event.y() - self.last_y
-        
-        # Convert mouse movement to signal value (-1 to 1 range)
-        y = (self.draw_area.height() - event.y()) / self.draw_area.height() * 2 - 1
-        
-        # Add to input buffer with rate limiting
-        if len(self.input_signal) < 10000:  # Maintain max buffer size
-            self.input_signal.append(y)
-        else:
-            self.input_signal = self.input_signal[1:] + [y]
-        
-        self.last_y = event.y()
+        """Handle mouse movement to generate signal based on horizontal movement only"""
+        if self.is_drawing:
+            if not hasattr(self, 'last_x') or not hasattr(self, 'current_y'):
+                self.last_x = event.x()
+                self.current_y = 0  # Starting y value
+                return
+                    
+            # Calculate horizontal movement
+            dx = event.x() - self.last_x
+            
+            # Accumulate y value based on x movement
+            sensitivity = 0.01
+            self.current_y += dx * sensitivity
+            
+            # Clamp y value between -1 and 1
+            self.current_y = max(-1, min(1, self.current_y))
+            
+            # Add to input buffer with rate limiting
+            if len(self.input_signal) < 10000:
+                self.input_signal.append(self.current_y)
+            else:
+                self.input_signal = self.input_signal[1:] + [self.current_y]
+            
+            self.last_x = event.x()
         
     def process_signal(self):
         # Implement actual filter processing using difference equation
@@ -1518,6 +1530,18 @@ class FilterDesignApp(QMainWindow):
         panel = QGroupBox("Real-time Processing")
         layout = QVBoxLayout()
 
+        mode_layout = QHBoxLayout()
+        self.draw_mode_cb = QCheckBox("Drawing Mode")
+        self.file_mode_cb = QCheckBox("File Mode")
+        self.draw_mode_cb.setChecked(True)
+        # Connect signals
+        self.draw_mode_cb.toggled.connect(lambda state: self.switch_mode('draw', state))
+        self.file_mode_cb.toggled.connect(lambda state: self.switch_mode('file', state))
+        
+        mode_layout.addWidget(self.draw_mode_cb)
+        mode_layout.addWidget(self.file_mode_cb)
+        layout.addLayout(mode_layout)
+
         # Speed control with finer granularity
         speed_layout = QHBoxLayout()
         self.speed_slider = QSlider(Qt.Horizontal)
@@ -1571,7 +1595,22 @@ class FilterDesignApp(QMainWindow):
         self.input_curve = self.input_plot.plot(pen='y')
         self.output_curve = self.output_plot.plot(pen='c')
 
-
+        # Browse button (initially disabled)
+        self.browse_btn = QPushButton("Browse Signal")
+        self.browse_btn.clicked.connect(self.browse_signal_file)
+        self.browse_btn.setEnabled(False)
+        self.browse_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_SECONDARY};
+                color: {TEXT_COLOR};
+                border: 1px solid {ACCENT_COLOR};
+                padding: 5px;
+            }}
+            QPushButton:hover {{
+                background-color: {ACCENT_COLOR};
+            }}
+        """)
+        layout.addWidget(self.browse_btn)
 
         # Add widgets to layout
         layout.addLayout(speed_layout)
@@ -1601,7 +1640,31 @@ class FilterDesignApp(QMainWindow):
 
         panel.setLayout(layout)
         return panel
-
+    
+    def switch_mode(self, mode, state):
+        """Handle mode switching"""
+        if not state:  # Ignore deselection events
+            return
+            
+        if mode == 'draw':
+            self.file_mode_cb.setChecked(False)
+            self.browse_btn.setEnabled(False)
+            self.draw_area.setEnabled(True)
+            self.is_drawing = True
+            self.last_x = None
+        else:  # file mode
+            self.draw_mode_cb.setChecked(False)
+            self.file_mode_cb.setChecked(True)
+            self.browse_btn.setEnabled(True)
+            self.draw_area.setEnabled(False)
+            self.is_drawing = False
+        
+        # Clear data
+        self.input_plot.clear()
+        self.output_plot.clear()
+        self.input_signal = deque(maxlen=10000)
+        self.output_signal = deque(maxlen=10000)
+        self.update_signal_plots()
 
     def sync_y_axes(self):
         """Synchronize Y axes ranges between input and output plots"""
@@ -1616,6 +1679,125 @@ class FilterDesignApp(QMainWindow):
         # Set both plots to the same range
         self.input_plot.setYRange(y_min, y_max)
         self.output_plot.setYRange(y_min, y_max)
+
+    def browse_signal_file(self):
+        """Handle signal file browsing"""
+        try:
+            filename, _ = QFileDialog.getOpenFileName(
+                self,
+                "Open Signal File",
+                "",
+                "CSV Files (*.csv);;All Files (*)"
+            )
+            
+            if filename:
+                # Read CSV data with pandas
+                df = pd.read_csv(filename)
+                
+                # Extract time and signal columns
+                time = df['Time'].values
+                signal = df['Signal'].values
+                
+                # Clear existing signals
+                self.input_signal.clear()
+                self.output_signal.clear()
+                
+                # Add data points
+                self.signal_data = signal  # Use signal data for filtering
+                self.time = time
+
+                # Plot time vs. signal
+                self.input_plot.clear()
+                self.input_plot.plot(time, signal, pen='y')
+                self.input_plot.setXRange(0, 1)
+                self.input_plot.setYRange(min(signal) - 1, max(signal) + 1)
+                self.input_plot.setLimits(xMin=0, xMax=time[-1], yMin= min(signal) - 1, yMax= max(signal) + 1)
+                
+                # Apply filter to the loaded signal
+                self.apply_filter()
+                
+        except Exception as e:
+            QMessageBox.warning(self, "Error", 
+                f"Failed to load file {filename}:\n{str(e)}")
+
+    def apply_filter(self):
+        """Apply selected filter to the loaded signal data"""
+        if self.signal_data is None:
+            return
+            
+        fs = 1000  # Sampling frequency
+        order = 4  # Fixed filter order
+        cutoff = 100  # Fixed cutoff frequency
+        nyquist = fs / 2
+        
+        filter_name = self.filter_combo.currentText()
+        
+        try:
+            if not self.all_pass_enabled.isChecked():
+                print("No all-pass filters enabled")
+                filtered_signal = self.signal_data
+                time = self.time
+                self.output_plot.plot(self.time ,self.signal_data)
+                self.output_plot.setXRange(0, 1)
+                self.output_plot.setLimits(xMin=0, xMax=time[-1], yMin= min(filtered_signal) - 1, yMax= max(filtered_signal) + 1)
+                self.output_plot.setTitle(f"Filtered Signal ({filter_name})")
+                self.output_plot.setYRange(min(filtered_signal) - 1, max(filtered_signal) + 1)
+            else:
+                if "Butterworth" in filter_name:
+                    if "Lowpass" in filter_name:
+                        b, a = signal.butter(order, cutoff / nyquist, 'low')
+                    elif "Highpass" in filter_name:
+                        b, a = signal.butter(order, cutoff / nyquist, 'high')
+                    else:  # Bandpass
+                        b, a = signal.butter(order, [cutoff / nyquist, (cutoff + 100) / nyquist], 'band')
+                        
+                elif "Chebyshev I" in filter_name:
+                    rp = 3  # ripple in passband
+                    if "Lowpass" in filter_name:
+                        b, a = signal.cheby1(order, rp, cutoff / nyquist, 'low')
+                    elif "Highpass" in filter_name:
+                        b, a = signal.cheby1(order, rp, cutoff / nyquist, 'high')
+                    else:  # Bandpass
+                        b, a = signal.cheby1(order, rp, [cutoff / nyquist, (cutoff + 100) / nyquist], 'band')
+                        
+                elif "Chebyshev II" in filter_name:
+                    rs = 40  
+                    if "Lowpass" in filter_name:
+                        b, a = signal.cheby2(order, rs, cutoff / nyquist, 'low')
+                    elif "Highpass" in filter_name:
+                        b, a = signal.cheby2(order, rs, cutoff / nyquist, 'high')
+                    else:  # Bandpass
+                        b, a = signal.cheby2(order, rs, [cutoff / nyquist, (cutoff + 100) / nyquist], 'band')
+                        
+                elif "Bessel" in filter_name:
+                    if "Lowpass" in filter_name:
+                        b, a = signal.bessel(order, cutoff / nyquist, 'low')
+                    else:  # Highpass
+                        b, a = signal.bessel(order, cutoff / nyquist, 'high')
+                        
+                elif "Elliptic" in filter_name:
+                    rp, rs = 3, 40  # ripple and attenuation
+                    if "Lowpass" in filter_name:
+                        b, a = signal.ellip(order, rp, rs, cutoff / nyquist, 'low')
+                    elif "Highpass" in filter_name:
+                        b, a = signal.ellip(order, rp, rs, cutoff / nyquist, 'high')
+                    else:  # Bandpass
+                        b, a = signal.ellip(order, rp, rs, [cutoff / nyquist, (cutoff + 100) / nyquist], 'band')
+                
+                filtered_signal = signal.filtfilt(b, a, self.signal_data)
+                
+                # Plot filtered signal
+                self.output_plot.clear()
+                time = np.arange(len(filtered_signal)) / fs
+                
+                self.output_plot.plot(time, filtered_signal, pen='r')
+                self.output_plot.setXRange(0, 1)
+                self.output_plot.setLimits(xMin=0, xMax=time[-1], yMin= min(self.signal_data) - 1, yMax= max(self.signal_data) + 1)
+                self.output_plot.setTitle(f"Filtered Signal ({filter_name})")
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to apply filter:\n{str(e)}")
+
 
     def update_signal_plots(self):
         """Update plots with synchronized buffers"""
@@ -1701,33 +1883,42 @@ class FilterDesignApp(QMainWindow):
         self.reset_signal_buffers()
 
     def handle_mouse_draw(self, event):
-        """Generate input signal from mouse movement"""
-        if not hasattr(self, 'last_pos'):
-            self.last_pos = event.pos()
-            self.last_time = time.time()
-            return
-            
-        # Calculate mouse velocity 
-        dt = time.time() - self.last_time
-        dx = event.pos().x() - self.last_pos.x()
-        dy = event.pos().y() - self.last_pos.y()
-        velocity = np.sqrt(dx*dx + dy*dy) / dt
-        
-        # Generate signal based on y position
-        y = 1.0 - (2.0 * event.pos().y() / self.draw_area.height())
-        
-        # Add frequency component based on velocity
-        if velocity > 0:
-            freq = min(20, velocity / 100)  # Cap max frequency
-            y *= np.sin(2 * np.pi * freq * dt)
-        
-        self.input_signal.append(float(y))
-        
-        # Update state
-        self.last_pos = event.pos()
-        self.last_time = time.time()
-        
-        self.process_next_sample()
+        """Handle mouse drawing states"""
+        if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            self.is_drawing = True
+            self.last_x = event.x()  # Initialize on press
+            self.current_y = 0
+            return True
+                
+        elif event.type() == QEvent.MouseMove and self.is_drawing:
+            if self.last_x is None:  # Safety check
+                self.last_x = event.x()
+                return True
+                
+            try:
+                dx = event.x() - self.last_x
+                sensitivity = 0.01
+                self.current_y += dx * sensitivity
+                self.current_y = max(-1, min(1, self.current_y))
+                
+                if len(self.input_signal) < self.input_signal.maxlen:
+                    self.input_signal.append(self.current_y)
+                else:
+                    self.input_signal.popleft()
+                    self.input_signal.append(self.current_y)
+                    
+                self.last_x = event.x()
+            except TypeError:
+                self.last_x = event.x()  # Reset on error
+                
+            return True
+                
+        elif event.type() == QEvent.MouseButtonRelease:
+            self.is_drawing = False
+            self.last_x = None  # Reset on release
+            return True
+                
+        return False
     
     def process_all_pass(self, x):
         """Apply enabled all-pass filters to input sample"""
