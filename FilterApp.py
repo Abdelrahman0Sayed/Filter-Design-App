@@ -22,6 +22,7 @@ import time
 import pyqtgraph as pg
 pg.setConfigOptions(antialias=True)
 
+
 # Dark theme colors
 DARK_PRIMARY = "#1e1e1e"
 DARK_SECONDARY = "#2d2d2d"
@@ -38,7 +39,15 @@ class FilterDesignApp(QMainWindow):
         self.setWindowTitle("Digital Filter Designer")
         self.setGeometry(100, 100, 1200, 800)
 
+        # Initialize filter data arrays
+        self.freq = np.zeros(0)
+        self.response = np.zeros(0)
         
+        self.data_buffer_x = []
+        self.data_buffer_y = []
+        self.max_buffer_size = 10000  # Maximum points to store
+        
+
         self.setup_toolbar()
         
         # Setup undo/redo
@@ -113,6 +122,53 @@ class FilterDesignApp(QMainWindow):
         self.process_timer = QTimer()
         self.process_timer.timeout.connect(self.process_next_sample)
         self.process_timer.start(20)
+
+
+    def update_plot(self, x_data, y_data):
+        """Update plot by appending new data"""
+        if len(x_data) != len(y_data):
+            return
+            
+        try:
+            # Append new data to buffers
+            self.data_buffer_x.extend(x_data)
+            self.data_buffer_y.extend(y_data)
+            
+            # Trim buffers if they exceed max size
+            if len(self.data_buffer_x) > self.max_buffer_size:
+                self.data_buffer_x = self.data_buffer_x[-self.max_buffer_size:]
+                self.data_buffer_y = self.data_buffer_y[-self.max_buffer_size:]
+            
+            # Plot accumulated data
+            self.plot_widget.plot(
+                self.data_buffer_x, 
+                self.data_buffer_y, 
+                pen=ACCENT_COLOR
+            )
+            
+        except Exception as e:
+            print(f"Error updating plot: {e}")
+    
+    def clear_plot(self):
+        """Clear plot and data buffers"""
+        self.data_buffer_x = []
+        self.data_buffer_y = []
+        self.plot_widget.clear()
+        
+    def setup_toolbar(self):
+        # ...existing code...
+        clear_action = QAction("Clear Plot", self)
+        clear_action.triggered.connect(self.clear_plot)
+        self.toolbar.addAction(clear_action)
+
+    def plot_filter_response(self):
+        """Plot the filter frequency response"""
+        try:
+            if len(self.freq) == len(self.response):
+                self.plot_widget.clear()
+                self.plot_widget.plot(self.freq, self.response, pen=ACCENT_COLOR)
+        except Exception as e:
+            print(f"Error plotting response: {e}")
 
     def setup_filter_design_tab(self):
         """Setup the filter design tab with z-plane and frequency response"""
@@ -1451,18 +1507,23 @@ class FilterDesignApp(QMainWindow):
         self.input_plot = pg.PlotWidget(title="Input Signal")
         self.output_plot = pg.PlotWidget(title="Filtered Signal") 
         
-        # Configure plots
+        
+        # Configure plots with fixed range
         for plot in [self.input_plot, self.output_plot]:
             plot.setBackground(PLOT_BG)
             plot.showGrid(x=True, y=True)
             plot.setLabel('bottom', "Time (s)")
             plot.setLabel('left', "Amplitude")
             plot.setYRange(-1.1, 1.1)
-            
-        # Add curves
+            plot.getViewBox().disableAutoRange(axis='x')  # Disable x auto-range
+            plot.setXRange(0, 100)  # Set fixed x-range
+        
+        # Add curves with continuous plotting
         self.input_curve = self.input_plot.plot(pen='y')
         self.output_curve = self.output_plot.plot(pen='c')
-        
+
+
+
         # Add widgets to layout
         layout.addLayout(speed_layout)
         layout.addLayout(window_layout)
@@ -1470,8 +1531,74 @@ class FilterDesignApp(QMainWindow):
         layout.addWidget(self.input_plot)
         layout.addWidget(self.output_plot)
         
+        # Link X axes of both plots
+        self.output_plot.setXLink(self.input_plot)
+
+        # Add synchronization button
+        sync_btn = QPushButton("Sync Y-Axes")
+        sync_btn.clicked.connect(self.sync_y_axes)
+        sync_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {DARK_SECONDARY};
+                color: {TEXT_COLOR};
+                border: 1px solid {ACCENT_COLOR};
+                padding: 5px;
+            }}
+            QPushButton:hover {{
+                background-color: {ACCENT_COLOR};
+            }}
+        """)
+
+
         panel.setLayout(layout)
         return panel
+
+
+    def sync_y_axes(self):
+        """Synchronize Y axes ranges between input and output plots"""
+        # Get current ranges
+        input_range = self.input_plot.getViewBox().viewRange()[1]
+        output_range = self.output_plot.getViewBox().viewRange()[1]
+        
+        # Use the wider range of the two
+        y_min = min(input_range[0], output_range[0])
+        y_max = max(input_range[1], output_range[1])
+        
+        # Set both plots to the same range
+        self.input_plot.setYRange(y_min, y_max)
+        self.output_plot.setYRange(y_min, y_max)
+
+    def update_signal_plots(self):
+        """Update plots with synchronized buffers"""
+        if not self.input_signal:
+            return
+            
+        try:
+            # Get buffer lengths
+            input_len = len(self.input_signal)
+            output_len = len(self.output_signal)
+            
+            # Synchronize buffer lengths
+            if input_len != output_len:
+                # Trim to shorter length
+                min_len = min(input_len, output_len)
+                input_data = list(self.input_signal)[-min_len:]
+                output_data = list(self.output_signal)[-min_len:]
+            else:
+                input_data = list(self.input_signal)
+                output_data = list(self.output_signal)
+                
+            # Create time axis
+            dt = 1.0 / self.processing_speed
+            t = np.arange(len(input_data)) * dt
+            
+            # Update plots with synchronized data
+            self.input_curve.setData(t, input_data)
+            self.output_curve.setData(t, output_data)
+            
+        except Exception as e:
+            print(f"Error updating plots: {e}")
+
 
     def change_signal_type(self, signal_type):
         """Change input signal generation method"""
