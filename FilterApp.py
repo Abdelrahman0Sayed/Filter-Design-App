@@ -31,6 +31,12 @@ TEXT_COLOR = "#ffffff"
 PLOT_BG = "#2d2d2d"
 PLOT_TEXT = "#ffffff"
 PLOT_GRID = "#404040"
+from PyQt5.QtGui import QFont
+
+BASE_FONT_SIZE = 12
+LARGE_FONT_SIZE = 14
+BUTTON_FONT_SIZE = 16
+TITLE_FONT_SIZE = 18
 
 
 class FilterDesignApp(QMainWindow):
@@ -123,6 +129,46 @@ class FilterDesignApp(QMainWindow):
         self.process_timer.timeout.connect(self.process_next_sample)
         self.process_timer.start(20)
 
+        self.apply_fonts()
+
+    def apply_fonts(self):
+        """Apply consistent fonts throughout the application"""
+        # Default font for all widgets
+        app_font = QFont()
+        app_font.setPointSize(BASE_FONT_SIZE)
+        self.setFont(app_font)
+        
+        # Button font
+        button_font = QFont()
+        button_font.setPointSize(BUTTON_FONT_SIZE)
+        button_font.setBold(True)
+        
+        # Title font
+        title_font = QFont()
+        title_font.setPointSize(TITLE_FONT_SIZE)
+        title_font.setBold(True)
+        
+        # Apply to all buttons
+        for btn in self.findChildren(QPushButton):
+            btn.setFont(button_font)
+        
+        # Apply to group box titles
+        for box in self.findChildren(QGroupBox):
+            box.setFont(title_font)
+        
+        # Apply to labels
+        for label in self.findChildren(QLabel):
+            label.setFont(app_font)
+        
+        # Apply to plots
+        self.z_ax.set_xlabel('Real Part', fontsize=LARGE_FONT_SIZE)
+        self.z_ax.set_ylabel('Imaginary Part', fontsize=LARGE_FONT_SIZE)
+        self.z_ax.set_title('Z-Plane Plot', fontsize=TITLE_FONT_SIZE)
+        
+        self.mag_ax.set_ylabel('Magnitude (dB)', fontsize=LARGE_FONT_SIZE)
+        self.phase_ax.set_xlabel('Normalized Frequency', fontsize=LARGE_FONT_SIZE)
+        self.phase_ax.set_ylabel('Phase (degrees)', fontsize=LARGE_FONT_SIZE)
+
 
     def update_plot(self, x_data, y_data):
         """Update plot by appending new data"""
@@ -204,7 +250,7 @@ class FilterDesignApp(QMainWindow):
                 border-radius: 4px;
                 padding: 8px;
                 min-width: 80px;
-                font-size: 11px;
+                font-size: 16px;
             }}
             QPushButton:hover {{
                 background-color: {ACCENT_COLOR};
@@ -331,7 +377,7 @@ class FilterDesignApp(QMainWindow):
                 border-radius: 4px;
                 padding: 8px;
                 min-width: 80px;
-                font-size: 11px;
+                font-size: 16px;
             }}
             QPushButton:hover {{
                 background-color: {ACCENT_COLOR};
@@ -432,9 +478,9 @@ class FilterDesignApp(QMainWindow):
         right_panel.setLayout(right_layout)
         
         # Add panels to main layout
-        layout.addWidget(left_panel)
-        layout.addWidget(center_panel)
-        layout.addWidget(right_panel)
+        layout.addWidget(left_panel,1)
+        layout.addWidget(center_panel,2)
+        layout.addWidget(right_panel,2)
         
         self.initialize_plots()
 
@@ -468,8 +514,9 @@ class FilterDesignApp(QMainWindow):
         left_side = self.setup_all_pass_panel()
         right_side = self.setup_signal_panel()
         
-        layout.addWidget(left_side)
-        layout.addWidget(right_side)
+        layout.addWidget(left_side, 1)  # 1/3 of space
+        layout.addWidget(right_side, 2)  # 2/3 of space
+        
         
         self.real_time_tab.setLayout(layout)
 
@@ -1382,6 +1429,7 @@ class FilterDesignApp(QMainWindow):
                 background-color: {DARK_SECONDARY};
                 color: {TEXT_COLOR};
                 border: 1px solid {ACCENT_COLOR};
+                font-size: 18px;
             }}
         """)
         
@@ -1411,6 +1459,7 @@ class FilterDesignApp(QMainWindow):
                 color: {TEXT_COLOR};
                 border: 1px solid {ACCENT_COLOR};
                 padding: 5px;
+                font-size: 14px;
             }}
             QPushButton:hover {{
                 background-color: {ACCENT_COLOR};
@@ -1493,7 +1542,7 @@ class FilterDesignApp(QMainWindow):
 
         # Drawing area with coordinate display
         self.draw_area = QWidget()
-        self.draw_area.setMinimumSize(300, 100)
+        self.draw_area.setMinimumSize(300, 250)
         self.draw_area.setStyleSheet(f"""
             QWidget {{
                 background-color: {DARK_SECONDARY};
@@ -1774,6 +1823,12 @@ class AllPassLibrary:
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    
+    # Set default font size
+    font = QFont()
+    font.setPointSize(BASE_FONT_SIZE)
+    app.setFont(font)
+    
     window = FilterDesignApp()
     window.show()
     sys.exit(app.exec_())
