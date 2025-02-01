@@ -7,10 +7,9 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle
 import numpy as np
-from scipy import signal
 from scipy.signal import zpk2tf, sosfreqz, sos2tf, tf2sos   # Used to convert zeros, poles, and gain to transfer function ,
 import matplotlib.pyplot as plt
-from PyQt5.QtCore import Qt, QSize, QEvent
+from PyQt5.QtCore import Qt, QSize
 from matplotlib.backends.backend_qt5agg import (
     FigureCanvasQTAgg as FigureCanvas,
     NavigationToolbar2QT as NavigationToolbar
@@ -22,8 +21,6 @@ from collections import deque
 import time
 import pyqtgraph as pg
 pg.setConfigOptions(antialias=True)
-import pandas as pd
-
 
 # Dark theme colors
 DARK_PRIMARY = "#1e1e1e"
@@ -33,12 +30,6 @@ TEXT_COLOR = "#ffffff"
 PLOT_BG = "#2d2d2d"
 PLOT_TEXT = "#ffffff"
 PLOT_GRID = "#404040"
-from PyQt5.QtGui import QFont
-
-BASE_FONT_SIZE = 12
-LARGE_FONT_SIZE = 14
-BUTTON_FONT_SIZE = 16
-TITLE_FONT_SIZE = 18
 
 
 class FilterDesignApp(QMainWindow):
@@ -47,21 +38,15 @@ class FilterDesignApp(QMainWindow):
         self.setWindowTitle("Digital Filter Designer")
         self.setGeometry(100, 100, 1200, 800)
 
-        # Initialize filter data arrays
-        self.freq = np.zeros(0)
-        self.response = np.zeros(0)
         
-        self.data_buffer_x = []
-        self.data_buffer_y = []
-        self.max_buffer_size = 10000  # Maximum points to store
-        
-
         self.setup_toolbar()
+
+        self.conjugate_pairs = {'zeros': {}, 'poles': {}}
         
         # Setup undo/redo
         self.history = []
         self.history_index = -1
-        self.is_drawing = True
+
         self.dragging = False
         self.drag_target = None
         self.drag_type = None
@@ -110,8 +95,9 @@ class FilterDesignApp(QMainWindow):
         self.setup_filter_design_tab()
         self.setup_real_time_tab()
         
-        self.last_x = None
-        self.current_y = 0        
+        
+        
+        
         
         # Initialize signal processing variables
         from collections import deque
@@ -129,93 +115,6 @@ class FilterDesignApp(QMainWindow):
         self.process_timer = QTimer()
         self.process_timer.timeout.connect(self.process_next_sample)
         self.process_timer.start(20)
-
-        self.apply_fonts()
-
-    def apply_fonts(self):
-        """Apply consistent fonts throughout the application"""
-        # Default font for all widgets
-        app_font = QFont()
-        app_font.setPointSize(BASE_FONT_SIZE)
-        self.setFont(app_font)
-        
-        # Button font
-        button_font = QFont()
-        button_font.setPointSize(BUTTON_FONT_SIZE)
-        button_font.setBold(True)
-        
-        # Title font
-        title_font = QFont()
-        title_font.setPointSize(TITLE_FONT_SIZE)
-        title_font.setBold(True)
-        
-        # Apply to all buttons
-        for btn in self.findChildren(QPushButton):
-            btn.setFont(button_font)
-        
-        # Apply to group box titles
-        for box in self.findChildren(QGroupBox):
-            box.setFont(title_font)
-        
-        # Apply to labels
-        for label in self.findChildren(QLabel):
-            label.setFont(app_font)
-        
-        # Apply to plots
-        self.z_ax.set_xlabel('Real Part', fontsize=LARGE_FONT_SIZE)
-        self.z_ax.set_ylabel('Imaginary Part', fontsize=LARGE_FONT_SIZE)
-        self.z_ax.set_title('Z-Plane Plot', fontsize=TITLE_FONT_SIZE)
-        
-        self.mag_ax.set_ylabel('Magnitude (dB)', fontsize=LARGE_FONT_SIZE)
-        self.phase_ax.set_xlabel('Normalized Frequency', fontsize=LARGE_FONT_SIZE)
-        self.phase_ax.set_ylabel('Phase (degrees)', fontsize=LARGE_FONT_SIZE)
-
-
-    def update_plot(self, x_data, y_data):
-        """Update plot by appending new data"""
-        if len(x_data) != len(y_data):
-            return
-            
-        try:
-            # Append new data to buffers
-            self.data_buffer_x.extend(x_data)
-            self.data_buffer_y.extend(y_data)
-            
-            # Trim buffers if they exceed max size
-            if len(self.data_buffer_x) > self.max_buffer_size:
-                self.data_buffer_x = self.data_buffer_x[-self.max_buffer_size:]
-                self.data_buffer_y = self.data_buffer_y[-self.max_buffer_size:]
-            
-            # Plot accumulated data
-            self.plot_widget.plot(
-                self.data_buffer_x, 
-                self.data_buffer_y, 
-                pen=ACCENT_COLOR
-            )
-            
-        except Exception as e:
-            print(f"Error updating plot: {e}")
-    
-    def clear_plot(self):
-        """Clear plot and data buffers"""
-        self.data_buffer_x = []
-        self.data_buffer_y = []
-        self.plot_widget.clear()
-        
-    def setup_toolbar(self):
-        # ...existing code...
-        clear_action = QAction("Clear Plot", self)
-        clear_action.triggered.connect(self.clear_plot)
-        self.toolbar.addAction(clear_action)
-
-    def plot_filter_response(self):
-        """Plot the filter frequency response"""
-        try:
-            if len(self.freq) == len(self.response):
-                self.plot_widget.clear()
-                self.plot_widget.plot(self.freq, self.response, pen=ACCENT_COLOR)
-        except Exception as e:
-            print(f"Error plotting response: {e}")
 
     def setup_filter_design_tab(self):
         """Setup the filter design tab with z-plane and frequency response"""
@@ -251,7 +150,7 @@ class FilterDesignApp(QMainWindow):
                 border-radius: 4px;
                 padding: 8px;
                 min-width: 80px;
-                font-size: 16px;
+                font-size: 11px;
             }}
             QPushButton:hover {{
                 background-color: {ACCENT_COLOR};
@@ -343,13 +242,7 @@ class FilterDesignApp(QMainWindow):
         left_layout.addWidget(self.code)
         left_layout.addWidget(self.export)
 
-        self.drag_btn = QPushButton("Drag Mode")
-        self.drag_btn.setCheckable(True)  # Make button toggleable
-        self.drag_btn.clicked.connect(lambda: self.set_mode('drag'))
-        self.drag_btn.setStyleSheet(button_style)
 
-        # Add to layout after other buttons
-        left_layout.addWidget(self.drag_btn)
         left_layout.addStretch()
 
             
@@ -378,7 +271,7 @@ class FilterDesignApp(QMainWindow):
                 border-radius: 4px;
                 padding: 8px;
                 min-width: 80px;
-                font-size: 16px;
+                font-size: 11px;
             }}
             QPushButton:hover {{
                 background-color: {ACCENT_COLOR};
@@ -406,44 +299,22 @@ class FilterDesignApp(QMainWindow):
         points_layout.addWidget(self.conjugate_check)
         points_group.setLayout(points_layout)
         
-        
+        # Implementation Group
+        impl_group = QGroupBox("Implementation")
+        impl_layout = QVBoxLayout()
+        impl_layout.addWidget(self.direct_form)
+        impl_layout.addWidget(self.cascade_form)
+        impl_layout.addWidget(self.export)
+        impl_layout.addWidget(self.code)
+        impl_group.setLayout(impl_layout)
         
         # Add all groups to main layout
         left_layout.addWidget(points_group)
+        left_layout.addWidget(impl_group)
         left_panel.setLayout(left_layout)
         
         # Update plot styling
         plt.style.use('dark_background')
-
-        zoom_layout = QHBoxLayout()
-        zoom_layout.addWidget(QLabel("Zoom:"))
-        
-        self.zoom_slider = QSlider(Qt.Horizontal)
-        self.zoom_slider.setMinimum(100)  # 1x zoom
-        self.zoom_slider.setMaximum(400)  # 4x zoom
-        self.zoom_slider.setValue(200)     # 2x default
-        self.zoom_slider.valueChanged.connect(self.update_zoom)
-        
-        zoom_layout.addWidget(self.zoom_slider)
-        zoom_layout.addWidget(QLabel("1x"))
-        zoom_layout.addWidget(QLabel("4x"))
-        
-        left_layout.addLayout(zoom_layout)
-        
-        # Style the zoom slider
-        self.zoom_slider.setStyleSheet(f"""
-            QSlider::groove:horizontal {{
-                background: {DARK_SECONDARY};
-                height: 6px;
-                border-radius: 3px;
-            }}
-            QSlider::handle:horizontal {{
-                background: {ACCENT_COLOR};
-                width: 18px;
-                margin: -6px 0;
-                border-radius: 9px;
-            }}
-        """)
         
         
         
@@ -453,7 +324,6 @@ class FilterDesignApp(QMainWindow):
         center_layout = QVBoxLayout()
         self.z_plane_figure = Figure(figsize=(6, 6))
         self.z_plane_canvas = FigureCanvas(self.z_plane_figure)
-        self.z_plane_canvas.mpl_connect('button_press_event', self.on_click)
         center_layout.addWidget(self.z_plane_canvas)
         # Add motion and release connections
         self.z_plane_canvas.mpl_connect('button_press_event', self.on_press)
@@ -477,11 +347,15 @@ class FilterDesignApp(QMainWindow):
         
         right_layout.addWidget(self.freq_canvas)
         right_panel.setLayout(right_layout)
+
+        ###################
+        all_pass_panel_side = self.setup_all_pass_panel()
         
         # Add panels to main layout
-        layout.addWidget(left_panel,1)
-        layout.addWidget(center_panel,2)
-        layout.addWidget(right_panel,2)
+        layout.addWidget(left_panel)
+        layout.addWidget(center_panel)
+        layout.addWidget(right_panel)
+        layout.addWidget(all_pass_panel_side)
         
         self.initialize_plots()
 
@@ -489,35 +363,14 @@ class FilterDesignApp(QMainWindow):
         
         self.filter_design_tab.setLayout(layout)
 
-        self.direct_form.toggled.connect(self.on_form_changed)
-        self.cascade_form.toggled.connect(self.on_form_changed)
-
-    def on_form_changed(self):
-        """Handle filter form change"""
-        # Reset filter states
-        self.direct_state = None
-        self.cascade_state = None
-        
-        # Clear output buffer to show new response
-        self.output_signal.clear()
-        
-        # Update plots if in real-time tab
-        self.update_signal_plots()
-        
-        # Print current form for debugging
-        print(f"Changed to: {'Direct Form II' if self.direct_form.isChecked() else 'Cascade Form'}")
-
     def setup_real_time_tab(self):
         """Setup the real-time processing tab with all-pass filters and signal processing"""
         layout = QHBoxLayout()
         
         # Combine all-pass and real-time panels
-        left_side = self.setup_all_pass_panel()
+        
         right_side = self.setup_signal_panel()
-        
-        layout.addWidget(left_side, 1)  # 1/3 of space
-        layout.addWidget(right_side, 2)  # 2/3 of space
-        
+        layout.addWidget(right_side)
         
         self.real_time_tab.setLayout(layout)
 
@@ -570,7 +423,6 @@ class FilterDesignApp(QMainWindow):
         self.z_ax.set_xlim(-2, 2)
         self.z_ax.set_ylim(-2, 2)
         
-        
         # Add major and minor grid lines
         self.z_ax.grid(True, which='major', color=PLOT_GRID, linestyle='-', alpha=0.5)
         self.z_ax.grid(True, which='minor', color=PLOT_GRID, linestyle=':', alpha=0.3)
@@ -604,21 +456,18 @@ class FilterDesignApp(QMainWindow):
             self.current_mode = None
             self.add_zero_btn.setChecked(False)
             self.add_pole_btn.setChecked(False)
-            self.drag_btn.setChecked(False)
         else:
             # Activate new mode
             self.current_mode = mode
             self.add_zero_btn.setChecked(mode == 'zero')
             self.add_pole_btn.setChecked(mode == 'pole')
-            self.drag_btn.setChecked(mode == 'drag')
             
         # Update cursor based on mode
-        if self.current_mode == 'drag':
-            self.z_plane_canvas.setCursor(Qt.OpenHandCursor)
-        elif self.current_mode:
-            self.z_plane_canvas.setCursor(Qt.CrossCursor) 
+        if self.current_mode:
+            self.z_plane_canvas.setCursor(Qt.CrossCursor)
         else:
             self.z_plane_canvas.setCursor(Qt.ArrowCursor)
+
 
     def clear_all(self):
         self.zeros = []
@@ -641,43 +490,7 @@ class FilterDesignApp(QMainWindow):
         self.add_to_history()
         self.update_plots()
 
-    def on_click(self, event):
-        if event.inaxes != self.z_ax:
-            return
-            
-        x, y = event.xdata, event.ydata
-        changed = False
-        
-        # Check if clicking near existing point to delete
-        for i, zero in enumerate(self.zeros):
-            if abs(zero.real - x) < 0.1 and abs(zero.imag - y) < 0.1:
-                self.zeros.pop(i)
-                changed = True
-                break
-                
-        for i, pole in enumerate(self.poles):
-            if abs(pole.real - x) < 0.1 and abs(pole.imag - y) < 0.1:
-                self.poles.pop(i)
-                changed = True
-                break
-        
-        # Add new point if not deleting
-        if not changed and self.current_mode:
-            if self.current_mode == 'zero':
-                self.zeros.append(complex(x, y))
-                if self.conjugate_check.isChecked():
-                    self.zeros.append(complex(x, -y))
-                changed = True
-            elif self.current_mode == 'pole':
-                self.poles.append(complex(x, y))
-                if self.conjugate_check.isChecked():
-                    self.poles.append(complex(x, -y))
-                changed = True
-                
-        if changed:
-            self.add_to_history()
-            self.update_plots()
-        
+    
     def update_plots(self):
         self.z_ax.clear()
         
@@ -718,63 +531,53 @@ class FilterDesignApp(QMainWindow):
         self.update_frequency_response()
         
     def update_frequency_response(self):
-        # Calculate frequency points with higher resolution
+        """Update frequency response including all-pass effects"""
+        # Calculate frequency points
         w = np.linspace(0, np.pi, 2000)
         z = np.exp(1j * w)
         
-        # Calculate transfer function
+        # Main filter transfer function
         H = np.ones_like(z, dtype=complex)
         for zero in self.zeros:
             H *= (z - zero)
         for pole in self.poles:
             H /= (z - pole)
-            
-        # Calculate magnitude and phase
+        
+        # Apply all-pass filters
+        if hasattr(self, 'all_pass_enabled') and self.all_pass_enabled.isChecked():
+            for i in range(self.all_pass_list.count()):
+                item = self.all_pass_list.item(i)
+                if item.checkState() == Qt.Checked:
+                    filter = self.all_pass_library.get_filter(i)
+                    if filter:
+                        # Calculate all-pass transfer function properly
+                        num = z - filter.zero  # Numerator
+                        den = 1 - filter.pole * z  # Denominator
+                        H_ap = num / den
+                        H *= H_ap  # Apply to main transfer function
+        
+        # Calculate magnitude and phase responses
         mag_db = 20 * np.log10(np.abs(H))
-        phase_deg = np.unwrap(np.angle(H, deg=True))
+        phase_deg = np.unwrap(np.angle(H)) * 180 / np.pi  # Convert to degrees
         
         # Clear previous plots
         self.mag_ax.clear()
         self.phase_ax.clear()
         
-        # Enhanced magnitude plot
+        # Plot magnitude response
         self.mag_ax.plot(w/np.pi, mag_db, 'w-', linewidth=2)
-        self.mag_ax.set_ylabel('Magnitude (dB)', color=PLOT_TEXT, fontsize=12)
-        self.mag_ax.grid(True, which='both', color=PLOT_GRID, linestyle='--', alpha=0.5)
-        self.mag_ax.set_title('Magnitude Response', color=PLOT_TEXT, fontsize=14)
+        self.mag_ax.set_ylabel('Magnitude (dB)', color=PLOT_TEXT)
+        self.mag_ax.set_title('Magnitude Response', color=PLOT_TEXT)
+        self.mag_ax.grid(True)
         
-        # Add magnitude guidelines
-        mag_yticks = np.arange(np.floor(min(mag_db)/10)*10, 
-                            np.ceil(max(mag_db)/10)*10, 10)
-        self.mag_ax.set_yticks(mag_yticks)
-        
-        # Enhanced phase plot
+        # Plot phase response
         self.phase_ax.plot(w/np.pi, phase_deg, 'w-', linewidth=2)
-        self.phase_ax.set_xlabel('Normalized Frequency (×π rad/sample)', 
-                            color=PLOT_TEXT, fontsize=12)
-        self.phase_ax.set_ylabel('Phase (degrees)', color=PLOT_TEXT, fontsize=12)
-        self.phase_ax.grid(True, which='both', color=PLOT_GRID, linestyle='--', alpha=0.5)
-        self.phase_ax.set_title('Phase Response', color=PLOT_TEXT, fontsize=14)
+        self.phase_ax.set_xlabel('Normalized Frequency (×π rad/sample)', color=PLOT_TEXT)
+        self.phase_ax.set_ylabel('Phase (degrees)', color=PLOT_TEXT)
+        self.phase_ax.set_title('Phase Response', color=PLOT_TEXT)
+        self.phase_ax.grid(True)
         
-        # Add phase guidelines
-        phase_yticks = np.arange(np.floor(min(phase_deg)/90)*90, 
-                                np.ceil(max(phase_deg)/90)*90, 90)
-        self.phase_ax.set_yticks(phase_yticks)
-        
-        # Add frequency guidelines
-        for ax in [self.mag_ax, self.phase_ax]:
-            ax.set_xticks(np.arange(0, 1.1, 0.2))
-            ax.set_xticklabels([f'{x:.1f}π' for x in np.arange(0, 1.1, 0.2)])
-            ax.grid(True, which='both', color=PLOT_GRID, linestyle='--', alpha=0.5)
-        
-        # Update styling
-        for ax in [self.mag_ax, self.phase_ax]:
-            ax.set_facecolor(PLOT_BG)
-            ax.tick_params(colors=PLOT_TEXT)
-            for spine in ax.spines.values():
-                spine.set_color(PLOT_TEXT)
-        
-        # Adjust layout and draw
+        # Update plots
         self.freq_figure.tight_layout()
         self.freq_canvas.draw()
 
@@ -809,25 +612,22 @@ class FilterDesignApp(QMainWindow):
         toolbar.addAction(redo_action)
         
         # Filter library dropdown
-        self.filter_combo = QComboBox()
-        self.filter_combo.addItems([
-            "Butterworth Highpass",
-            "Butterworth Lowpass",
-            "Butterworth Bandpass",
-            "Chebyshev I Lowpass",
-            "Chebyshev I Highpass",
-            "Chebyshev I Bandpass",
-            "Chebyshev II Lowpass",
-            "Chebyshev II Highpass",
-            "Chebyshev II Bandpass",
-            "Bessel Lowpass",
-            "Bessel Highpass",
-            "Elliptic Lowpass",
-            "Elliptic Highpass",
-            "Elliptic Bandpass"
+        filter_combo = QComboBox()
+        filter_combo.addItems([
+            "Butterworth LPF",
+            "Chebyshev LPF",
+            "Elliptic LPF",
+            "Butterworth HPF",
+            "Chebyshev HPF",
+            "Elliptic HPF",
+            "Bessel LPF",
+            "Bessel HPF",
+            "Gaussian LPF",
+            "Notch Filter"
+
         ])
-        self.filter_combo.currentTextChanged.connect(self.apply_filter)
-        toolbar.addWidget(self.filter_combo)
+        filter_combo.currentTextChanged.connect(self.load_preset_filter)
+        toolbar.addWidget(filter_combo)
 
     # def load_preset_filter(self, filter_name):
     #     if filter_name == "Butterworth LPF":
@@ -1036,50 +836,81 @@ class FilterDesignApp(QMainWindow):
         self.input_signal.clear()
         self.output_signal.clear()
 
-        
+    def find_conjugate(self, idx, points):
+        """Find index of conjugate pair for given point"""
+        point = points[idx]
+        for i, p in enumerate(points):
+            # Check if this is a different point with conjugate coordinates
+            if i != idx and abs(p.real - point.real) < 0.01 and abs(p.imag + point.imag) < 0.01:
+                return i
+        return None
+
     def on_press(self, event):
-        """Handle mouse press for dragging and adding points"""
         if event.inaxes != self.z_ax:
             return
 
         x, y = event.xdata, event.ydata
             
-        # Left click
-        if event.button == 1:
-            # Check for dragging if in drag mode
-            if self.current_mode == 'drag':
-                # Check zeros then poles for dragging
-                for i, zero in enumerate(self.zeros):
-                    if abs(zero.real - x) < 0.1 and abs(zero.imag - y) < 0.1:
-                        self.dragging = True
-                        self.drag_target = i
-                        self.drag_type = 'zero'
-                        self.z_plane_canvas.setCursor(Qt.ClosedHandCursor)
-                        return
-                        
-                for i, pole in enumerate(self.poles):
-                    if abs(pole.real - x) < 0.1 and abs(pole.imag - y) < 0.1:
-                        self.dragging = True
-                        self.drag_target = i
-                        self.drag_type = 'pole'
-                        self.z_plane_canvas.setCursor(Qt.ClosedHandCursor)
-                        return
-                        
-            # Add new point if in add mode
-            elif self.current_mode in ['zero', 'pole']:
-                if self.current_mode == 'zero':
-                    self.zeros.append(complex(x, y))
-                    if self.conjugate_check.isChecked():
-                        self.zeros.append(complex(x, -y))
-                else:  # pole mode
-                    self.poles.append(complex(x, y))
-                    if self.conjugate_check.isChecked():
-                        self.poles.append(complex(x, -y))
-                self.add_to_history()
-                self.update_plots()
+        # Right click to delete
+        if event.button == 3:  # Right click
+            self.handle_deletion(x, y)
+            return
+        
+        # Left click to add or start dragging
+        elif event.button == 1:
+            # Check for dragging first
+            for i, zero in enumerate(self.zeros):
+                if abs(zero.real - x) < 0.1 and abs(zero.imag - y) < 0.1:
+                    self.dragging = True
+                    self.drag_target = i
+                    self.drag_type = 'zero'
+                    self.z_plane_canvas.setCursor(Qt.ClosedHandCursor)
+                    return
+                    
+            for i, pole in enumerate(self.poles):
+                if abs(pole.real - x) < 0.1 and abs(pole.imag - y) < 0.1:
+                    self.dragging = True
+                    self.drag_target = i
+                    self.drag_type = 'pole'
+                    self.z_plane_canvas.setCursor(Qt.ClosedHandCursor)
+                    return
+            
+            # If not dragging, add new point if in add mode
+            if self.current_mode:
+                self.add_new_point(x, y)
+
+    def add_new_point(self, x, y):
+        """Add new point with stability check"""
+        # Check if adding pole would make filter unstable
+        if self.current_mode == 'pole':
+            radius = np.sqrt(x*x + y*y)
+            if radius >= 1.0:
+                QMessageBox.warning(self, "Unstable Filter", 
+                                "Poles must be inside the unit circle")
+                return
+                
+        if self.current_mode == 'zero':
+            idx = len(self.zeros)
+            self.zeros.append(complex(x, y))
+            if self.conjugate_check.isChecked():
+                conj_idx = len(self.zeros)
+                self.zeros.append(complex(x, -y))
+                self.conjugate_pairs['zeros'][idx] = conj_idx
+                self.conjugate_pairs['zeros'][conj_idx] = idx
+        else:  # pole mode
+            idx = len(self.poles)
+            self.poles.append(complex(x, y))
+            if self.conjugate_check.isChecked():
+                conj_idx = len(self.poles)
+                self.poles.append(complex(x, -y))
+                self.conjugate_pairs['poles'][idx] = conj_idx
+                self.conjugate_pairs['poles'][conj_idx] = idx
+        
+        self.add_to_history()
+        self.update_plots()
 
     def on_motion(self, event):
-        """Handle dragging poles/zeros"""
+        """Handle dragging with stability check"""
         if not self.dragging or event.inaxes != self.z_ax:
             return
                 
@@ -1087,21 +918,67 @@ class FilterDesignApp(QMainWindow):
         if x is None or y is None:
             return
                 
-        # Update position of dragged point
-        if self.drag_type == 'zero':
-            self.zeros[self.drag_target] = complex(x, y)
-            if self.conjugate_check.isChecked():
-                conj_idx = self.find_conjugate(self.drag_target, self.zeros)
-                if conj_idx is not None:
-                    self.zeros[conj_idx] = complex(x, -y)
-        else:  # pole
-            self.poles[self.drag_target] = complex(x, y)
-            if self.conjugate_check.isChecked():
-                conj_idx = self.find_conjugate(self.drag_target, self.poles)
-                if conj_idx is not None:
-                    self.poles[conj_idx] = complex(x, -y)
-                        
+        # Check stability when dragging poles
+        if self.drag_type == 'pole':
+            radius = np.sqrt(x*x + y*y)
+            if radius >= 1.0:
+                return
+                
+        points = self.zeros if self.drag_type == 'zero' else self.poles
+        pairs = self.conjugate_pairs['zeros' if self.drag_type == 'zero' else 'poles']
+        
+        # Update dragged point
+        points[self.drag_target] = complex(x, y)
+        
+        # Update conjugate if exists
+        if self.conjugate_check.isChecked() and self.drag_target in pairs:
+            conj_idx = pairs[self.drag_target]
+            points[conj_idx] = complex(x, -y)
+        
         self.update_plots()
+
+    def handle_deletion(self, x, y):
+        """Handle deletion of points and their conjugates"""
+        # Check zeros
+        for i, zero in enumerate(self.zeros):
+            if abs(zero.real - x) < 0.1 and abs(zero.imag - y) < 0.1:
+                # Delete conjugate if exists
+                if i in self.conjugate_pairs['zeros']:
+                    conj_idx = self.conjugate_pairs['zeros'][i]
+                    # Remove the one with larger index first
+                    if conj_idx > i:
+                        self.zeros.pop(conj_idx)
+                        self.zeros.pop(i)
+                    else:
+                        self.zeros.pop(i)
+                        self.zeros.pop(conj_idx)
+                    # Clean up conjugate pairs
+                    del self.conjugate_pairs['zeros'][i]
+                    del self.conjugate_pairs['zeros'][conj_idx]
+                else:
+                    self.zeros.pop(i)
+                self.add_to_history()
+                self.update_plots()
+                return
+
+        # Check poles - same logic as zeros
+        for i, pole in enumerate(self.poles):
+            if abs(pole.real - x) < 0.1 and abs(pole.imag - y) < 0.1:
+                if i in self.conjugate_pairs['poles']:
+                    conj_idx = self.conjugate_pairs['poles'][i]
+                    if conj_idx > i:
+                        self.poles.pop(conj_idx)
+                        self.poles.pop(i)
+                    else:
+                        self.poles.pop(i)
+                        self.poles.pop(conj_idx)
+                    del self.conjugate_pairs['poles'][i]
+                    del self.conjugate_pairs['poles'][conj_idx]
+                else:
+                    self.poles.pop(i)
+                self.add_to_history()
+                self.update_plots()
+                return
 
     def on_release(self, event):
         """Handle mouse release after dragging"""
@@ -1114,52 +991,146 @@ class FilterDesignApp(QMainWindow):
             if self.current_mode == 'drag':
                 self.z_plane_canvas.setCursor(Qt.OpenHandCursor)
 
-
-    def find_conjugate(self, idx, points):
-        """Find index of conjugate pair for given point"""
-        point = points[idx]
-        for i, p in enumerate(points):
-            if i != idx and abs(p.real - point.real) < 0.01 and abs(p.imag + point.imag) < 0.01:
-                return i
-        return None
     
 
     def generate_c_code(self):
-        """
-        Generate and save C code for the designed filter to a file.
-        """
-        file_name = "filter_design.c"  # You can change this to a dynamic name if needed.
+        """Generate C code for the current filter design"""
+        try:
+            # Get coefficients based on selected form
+            if self.direct_form.isChecked():
+                coeffs = self.generate_direct_form_II()
+                c_code = self._generate_direct_form_c(coeffs)
+            else:
+                coeffs = self.generate_cascade_form()
+                c_code = self._generate_cascade_form_c(coeffs)
+            
+            # Save to file with proper path handling
+            file_name = "filter_implementation.c"
+            with open(file_name, "w") as file:
+                file.write(c_code)
+            print(f"C code saved to {file_name}")
+        except Exception as e:
+            print(f"Error generating C code: {e}")
 
-        # Generate the C code using zeros and poles.
-        c_code = f"""\
-    #include <stdio.h>
-    #include <math.h>
-
-    // Example filter coefficients (Replace with your filter's design)
-    #define NUM_ZEROS {len(self.zeros)}
-    #define NUM_POLES {len(self.poles)}
-
-    double zeros[NUM_ZEROS] = {{{', '.join([f'{z.real:.6f} + {z.imag:.6f}i' for z in self.zeros])}}};
-    double poles[NUM_POLES] = {{{', '.join([f'{p.real:.6f} + {p.imag:.6f}i' for p in self.poles])}}};
-
-    void apply_filter(double *input, double *output, int length) {{
-        // Implement filter processing here
-        for (int i = 0; i < length; i++) {{
-            output[i] = input[i]; // Placeholder: Replace with actual processing logic
-        }}
-    }}
-
-    int main() {{
-        printf("Filter Design Loaded\\n");
-        return 0;
-    }}
-    """
-
-        # Save the generated C code to a file.
-        with open(file_name, "w") as file:
-            file.write(c_code)
+    def _generate_direct_form_c(self, coeffs):
+        """Generate Direct Form II implementation"""
+        b = coeffs['b']
+        a = coeffs['a']
         
-        print(f"C code saved to {file_name}.")
+        template = [
+            '#include <stdio.h>',
+            '#include <stdlib.h>',
+            '#include <math.h>',
+            '',
+            f'#define NUM_B {len(b)}',
+            f'#define NUM_A {len(a)}',
+            '',
+            'typedef struct {',
+            '    double *state;',
+            '    int state_size;',
+            '} FilterState;',
+            '',
+            f'static const double b[NUM_B] = {{{", ".join([f"{x.real:.10f}" for x in b])}}};\n',
+            f'static const double a[NUM_A] = {{{", ".join([f"{x.real:.10f}" for x in a])}}};\n',
+            '',
+            'FilterState* filter_init(void) {',
+            '    FilterState* f = (FilterState*)malloc(sizeof(FilterState));',
+            '    f->state_size = NUM_A - 1;',
+            '    f->state = (double*)calloc(f->state_size, sizeof(double));',
+            '    return f;',
+            '}',
+            '',
+            'double filter_process(FilterState* f, double x) {',
+            '    double w = x;',
+            '    for(int i = 0; i < f->state_size; i++) {',
+            '        w -= a[i+1] * f->state[i];',
+            '    }',
+            '    double y = b[0] * w;',
+            '    for(int i = 0; i < f->state_size; i++) {',
+            '        y += b[i+1] * f->state[i];',
+            '    }',
+            '    for(int i = f->state_size-1; i > 0; i--) {',
+            '        f->state[i] = f->state[i-1];',
+            '    }',
+            '    f->state[0] = w;',
+            '    return y;',
+            '}',
+            '',
+            'void filter_free(FilterState* f) {',
+            '    free(f->state);',
+            '    free(f);',
+            '}',
+            '',
+            'int main(void) {',
+            '    FilterState* filter = filter_init();',
+            '    double input[10] = {1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};',
+            '    double output;',
+            '    for(int i = 0; i < 10; i++) {',
+            '        output = filter_process(filter, input[i]);',
+            '        printf("Sample %d: in=%.4f, out=%.4f\\n", i, input[i], output);',
+            '    }',
+            '    filter_free(filter);',
+            '    return 0;',
+            '}'
+        ]
+        
+        return '\n'.join(template)
+
+    def _generate_cascade_form_c(self, coeffs):
+        """Generate Cascade Form implementation"""
+        template = [
+            '#include <stdio.h>',
+            '#include <stdlib.h>',
+            '#include <math.h>',
+            '',
+            f'#define NUM_SECTIONS {len(coeffs)}',
+            '',
+            'typedef struct {',
+            '    double state[NUM_SECTIONS][2];',
+            '} FilterState;',
+            '',
+            'static const double sos[NUM_SECTIONS][6] = {',
+            ',\n'.join([f'    {{ {", ".join(f"{x:.10f}" for x in section)} }}' for section in coeffs]),
+            '};',
+            '',
+            'FilterState* filter_init(void) {',
+            '    FilterState* f = (FilterState*)malloc(sizeof(FilterState));',
+            '    for(int i = 0; i < NUM_SECTIONS; i++) {',
+            '        f->state[i][0] = 0.0;',
+            '        f->state[i][1] = 0.0;',
+            '    }',
+            '    return f;',
+            '}',
+            '',
+            'double filter_process(FilterState* f, double x) {',
+            '    double y = x, w;',
+            '    for(int i = 0; i < NUM_SECTIONS; i++) {',
+            '        w = y - sos[i][4]*f->state[i][0] - sos[i][5]*f->state[i][1];',
+            '        y = sos[i][0]*w + sos[i][1]*f->state[i][0] + sos[i][2]*f->state[i][1];',
+            '        f->state[i][1] = f->state[i][0];',
+            '        f->state[i][0] = w;',
+            '    }',
+            '    return y;',
+            '}',
+            '',
+            'void filter_free(FilterState* f) {',
+            '    free(f);',
+            '}',
+            '',
+            'int main(void) {',
+            '    FilterState* filter = filter_init();',
+            '    double input[10] = {1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};',
+            '    double output;',
+            '    for(int i = 0; i < 10; i++) {',
+            '        output = filter_process(filter, input[i]);',
+            '        printf("Sample %d: in=%.4f, out=%.4f\\n", i, input[i], output);',
+            '    }',
+            '    filter_free(filter);',
+            '    return 0;',
+            '}'
+        ]
+        
+        return '\n'.join(template)
 
 
     ########################## real time plotting ############################
@@ -1178,54 +1149,56 @@ class FilterDesignApp(QMainWindow):
                                     maxlen=value*10)
     
     def process_next_sample(self):
-        if self.is_drawing:
-            """Process next sample with length checking"""
-            if not self.input_signal:
-                return
-                
-            try:
-                
-                    x = self.input_signal[-1]
-                    y = self.apply_selected_filter(x)
+        """Main processing chain"""
+        if not self.input_signal:
+            return
                     
-                    # Maintain equal buffer lengths
-                    self.output_signal.append(float(y))
-                    while len(self.output_signal) > len(self.input_signal):
-                        self.output_signal.popleft()
-                        
-                    # Update visualization periodically
-                    if len(self.input_signal) % 10 == 0:
-                        self.update_signal_plots()
+        try:
+            # 1. Get input sample
+            x = self.input_signal[-1]
+            
+            # 2. Apply main filter (from z-plane design)
+            y = self.apply_selected_filter(x)
+            
+            # 3. Apply all-pass filters (optional)
+            if self.all_pass_enabled.isChecked():
+                y = self.apply_all_pass_filters(y)
                     
-            except Exception as e:
-                print(f"Error processing sample: {e}")
+            # 4. Store output and ensure signal buffers match
+            self.output_signal.append(float(y))
+            
+            # Ensure input and output buffers have same length
+            while len(self.output_signal) < len(self.input_signal):
+                self.output_signal.append(float(y))
+            while len(self.input_signal) < len(self.output_signal):
+                self.input_signal.append(float(x))
+                
+            # 5. Update visualization
+            self.update_signal_plots()
+        
+        except Exception as e:
+            print(f"Error processing sample: {e}")
 
 
     def on_mouse_draw(self, event):
-        """Handle mouse movement to generate signal based on horizontal movement only"""
-        if self.is_drawing:
-            if not hasattr(self, 'last_x') or not hasattr(self, 'current_y'):
-                self.last_x = event.x()
-                self.current_y = 0  # Starting y value
-                return
-                    
-            # Calculate horizontal movement
-            dx = event.x() - self.last_x
-            
-            # Accumulate y value based on x movement
-            sensitivity = 0.01
-            self.current_y += dx * sensitivity
-            
-            # Clamp y value between -1 and 1
-            self.current_y = max(-1, min(1, self.current_y))
-            
-            # Add to input buffer with rate limiting
-            if len(self.input_signal) < 10000:
-                self.input_signal.append(self.current_y)
-            else:
-                self.input_signal = self.input_signal[1:] + [self.current_y]
-            
-            self.last_x = event.x()
+        """Handle mouse movement in drawing area to generate input signal"""
+        if not hasattr(self, 'last_y'):
+            self.last_y = event.y()
+            return
+                
+        # Calculate vertical displacement for frequency
+        dy = event.y() - self.last_y
+        
+        # Convert mouse movement to signal value (-1 to 1 range)
+        y = (self.draw_area.height() - event.y()) / self.draw_area.height() * 2 - 1
+        
+        # Add to input buffer with rate limiting
+        if len(self.input_signal) < 10000:  # Maintain max buffer size
+            self.input_signal.append(y)
+        else:
+            self.input_signal = self.input_signal[1:] + [y]
+        
+        self.last_y = event.y()
         
     def process_signal(self):
         # Implement actual filter processing using difference equation
@@ -1241,41 +1214,40 @@ class FilterDesignApp(QMainWindow):
         self.output_signal.append(y)
 
     def apply_selected_filter(self, x):
-        """Apply the current filter to input sample x"""
+        """Apply filter with normalization"""
         try:
-            # Pass through if no filter defined
             if len(self.zeros) == 0 and len(self.poles) == 0:
                 return x
                 
-            # Get coefficients based on selected form
             if self.direct_form.isChecked():
                 coeffs = self.generate_direct_form_II()
                 y = self.apply_direct_form(x, coeffs)
-                print(f"Direct Form Output: {y}")  # Debug output
-                return y
             else:
                 coeffs = self.generate_cascade_form()
                 y = self.apply_cascade_form(x, coeffs)
-                print(f"Cascade Form Output: {y}")  # Debug output
-                return y
                 
+            # Normalize output to prevent overflow
+            if abs(y) > 1.0:
+                y = y / abs(y)
+                
+            return float(y)
+                    
         except Exception as e:
             print(f"Error applying filter: {e}")
             return x
 
     def apply_direct_form(self, x, coeffs):
         try:
-            b = np.array(coeffs['b'], dtype=float)
-            a = np.array(coeffs['a'], dtype=float)
+            # Convert coefficients to complex arrays
+            b = np.array(coeffs['b'], dtype=complex)
+            a = np.array(coeffs['a'], dtype=complex)
             
-            # Current implementation may not be correctly handling state updates
-            # Should be modified to:
             state_size = max(len(b), len(a)) - 1
             if self.direct_state is None or len(self.direct_state) != state_size:
-                self.direct_state = np.zeros(state_size)
+                self.direct_state = np.zeros(state_size, dtype=complex)
                 
             # Direct Form II implementation
-            w = x  # Input to state
+            w = complex(x)  # Input to state
             for i in range(1, len(a)):
                 w = w - a[i] * self.direct_state[i-1]
                 
@@ -1287,7 +1259,8 @@ class FilterDesignApp(QMainWindow):
             self.direct_state = np.roll(self.direct_state, 1)
             self.direct_state[0] = w
             
-            return float(y)
+            # Return real part for output
+            return float(np.real(y))
 
         except Exception as e:
             print(f"Error applying Direct Form II: {e}")
@@ -1304,9 +1277,9 @@ class FilterDesignApp(QMainWindow):
             b = np.poly(self.zeros) if self.zeros else np.array([1.0])
             a = np.poly(self.poles) if self.poles else np.array([1.0])
             
-            # Ensure arrays
-            b = np.array(b, dtype=float)
-            a = np.array(a, dtype=float)
+            # Keep as complex numbers
+            b = np.array(b, dtype=complex)
+            a = np.array(a, dtype=complex)
             
             # Normalize coefficients
             if len(a) > 0:
@@ -1358,42 +1331,225 @@ class FilterDesignApp(QMainWindow):
             
     def update_signal_plots(self):
         """Update scrolling signal display"""
-        if not self.input_signal:
+        if not self.input_signal or not self.output_signal:
             return
-            
+                
         # Get window size
         window = self.window_spin.value()
         
-        # Get recent samples
+        # Get recent samples and ensure same length
         input_data = np.array(list(self.input_signal)[-window:])
         output_data = np.array(list(self.output_signal)[-window:])
         
+        # Ensure both arrays have same length
+        min_len = min(len(input_data), len(output_data))
+        if min_len == 0:
+            return
+            
+        input_data = input_data[-min_len:]
+        output_data = output_data[-min_len:]
+        
         # Create time axis in seconds
         dt = 1.0 / self.processing_speed
-        t = np.arange(len(input_data)) * dt
+        t = np.arange(min_len) * dt
         
         # Update plots
         self.input_curve.setData(t, input_data)
         self.output_curve.setData(t, output_data)
 
-    def export_filter(self):
-        # Get current implementation type
-        if self.direct_form.isChecked():
-            coeffs = self.generate_direct_form_II()
-        else:
-            coeffs = self.generate_cascade_form()
-            
-        # Export to file
-        filename, _ = QFileDialog.getSaveFileName(
-            self, "Export Filter", "", "Text Files (*.txt);;All Files (*)"
-        )
-        if filename:
-            with open(filename, 'w') as f:
-                json.dump({
-                    'type': 'direct' if self.direct_form.isChecked() else 'cascade',
-                    'coefficients': coeffs
-                }, f)
 
+    def export_filter(self):
+        """Export filter realization diagram"""
+        try:
+            # Create new figure for block diagram
+            fig = plt.figure(figsize=(12, 8))
+            
+            if self.direct_form.isChecked():
+                self._draw_direct_form(fig)
+                title = "Direct Form II Implementation"
+            else:
+                self._draw_cascade_form(fig)
+                title = "Cascade Form Implementation"
+                
+            plt.suptitle(title, fontsize=16, color='white')
+            fig.patch.set_facecolor(DARK_PRIMARY)
+            
+            # Save dialog
+            filename, _ = QFileDialog.getSaveFileName(
+                self,
+                "Export Filter Realization",
+                "",
+                "PNG Files (*.png);;All Files (*)"
+            )
+            
+            if filename:
+                if not filename.endswith('.png'):
+                    filename += '.png'
+                plt.savefig(filename, facecolor=DARK_PRIMARY, bbox_inches='tight')
+                plt.close(fig)
+                
+                QMessageBox.information(
+                    self,
+                    "Export Successful",
+                    f"Filter realization saved to {filename}"
+                )
+                
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Export Error",
+                f"Error exporting filter realization: {str(e)}"
+            )
+
+    def _draw_direct_form(self, fig):
+        """Draw Direct Form II block diagram"""
+        coeffs = self.generate_direct_form_II()
+        b = np.array(coeffs['b'])
+        a = np.array(coeffs['a'])
+        
+        # Create subplot
+        ax = fig.add_subplot(111)
+        ax.set_facecolor(DARK_SECONDARY)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        
+        # Match array lengths
+        if len(b) < len(a):
+            b = np.pad(b, (0, len(a) - len(b)))
+        elif len(a) < len(b):
+            a = np.pad(a, (0, len(b) - len(a)))
+        
+        order = len(b) - 1
+        
+        # Draw delay elements and arrows
+        for i in range(order):
+            # Input feedforward
+            if a[i] != 0:
+                ax.arrow(0.6, 0.7 - (i * 0.4), -0.18, 0, head_width=0.02, 
+                        head_length=0.02, color='white')
+                ax.text(0.45, 0.72 - (i * 0.4), f"{a[i].real:.2f}", 
+                    fontsize=12, color=ACCENT_COLOR)
+            
+            # Output feedback
+            if b[i] != 0:
+                ax.arrow(0.6, 0.7 - (i * 0.4), 0.38, 0, head_width=0.02,
+                        head_length=0.02, color='white')
+                ax.text(0.8, 0.72 - (i * 0.4), f"{b[i].real:.2f}",
+                    fontsize=12, color=ACCENT_COLOR)
+            
+            # Vertical connections
+            ax.arrow(0.6, 0.7 - (i * 0.4), 0, -0.2, head_width=0.02,
+                    head_length=0.02, color='white')
+            
+            # Delay elements
+            ax.text(0.6, 0.5 - (i * 0.4), r"$Z^{-1}$", fontsize=9,
+                    ha="center", va="center",
+                    bbox=dict(boxstyle="square", facecolor=ACCENT_COLOR))
+            
+            # Continue vertical connections
+            ax.arrow(0.6, 0.4 - (i * 0.4), 0, -0.08, head_width=0.02,
+                    head_length=0.02, color='white')
+        
+        # Final coefficients
+        if a[order] != 0:
+            ax.arrow(0.6, 0.7 - (order * 0.4), -0.18, 0, head_width=0.02,
+                    head_length=0.02, color='white')
+            ax.text(0.45, 0.72 - (order * 0.4), f"{a[order].real:.2f}",
+                    fontsize=12, color=ACCENT_COLOR)
+        
+        if b[order] != 0:
+            ax.arrow(0.6, 0.7 - (order * 0.4), 0.38, 0, head_width=0.02,
+                    head_length=0.02, color='white')
+            ax.text(0.8, 0.72 - (order * 0.4), f"{b[order].real:.2f}",
+                    fontsize=12, color=ACCENT_COLOR)
+        
+        # Draw summation nodes
+        for i in range(order):
+            if a[i + 1] != 0:
+                ax.text(0.38, 0.7 - (i * 0.4), "+", fontsize=10,
+                    bbox=dict(boxstyle="circle", facecolor=ACCENT_COLOR))
+                ax.arrow(0.4, 0.32 - (i * 0.4), 0, 0.3, head_width=0.02,
+                        head_length=0.02, color='white')
+            
+            if b[i + 1] != 0:
+                ax.text(0.99, 0.7 - (i * 0.4), "+", fontsize=10,
+                    bbox=dict(boxstyle="circle", facecolor=ACCENT_COLOR))
+                ax.arrow(1, 0.32 - (i * 0.4), 0, 0.3, head_width=0.02,
+                        head_length=0.02, color='white')
+        
+        # Input/Output labels
+        ax.arrow(0.25, 0.7, 0.1, 0, head_width=0.02, head_length=0.02, color='white')
+        ax.arrow(1.24, 0.7, -0.18, 0, head_width=0.02, head_length=0.02, color='white')
+        ax.text(0.2, 0.7, "x[n]", fontsize=12, ha="center", color='white',
+                bbox=dict(boxstyle="round", facecolor=ACCENT_COLOR))
+        ax.text(1.26, 0.7, "y[n]", fontsize=12, ha="center", color='white',
+                bbox=dict(boxstyle="round", facecolor=ACCENT_COLOR))
+        
+        # Set plot limits
+        ax.set_xlim(-0.1, 1.3)
+        ax.set_ylim(-1, 1)
+
+    def _draw_cascade_form(self, fig):
+        """Draw Cascade Form block diagram"""
+        coeffs = self.generate_cascade_form()
+        
+        ax = fig.add_subplot(111)
+        ax.set_facecolor(DARK_SECONDARY)
+        ax.set_xticks([])
+        ax.set_yticks([])
+
+        x_offset = 0.1
+        width = 0.2
+        spacing = 0.25
+        
+        # Draw sections
+        for i, section in enumerate(coeffs):
+            # Section box
+            rect = plt.Rectangle(
+                (x_offset + i*spacing, 0.3),
+                width, 0.4,
+                facecolor=ACCENT_COLOR,
+                alpha=0.5
+            )
+            ax.add_patch(rect)
+            
+            # Add transfer function
+            z_term = f"1 + {section[1]:.2f}z⁻¹ + {section[2]:.2f}z⁻²"
+            denominator = f"1 + {section[4]:.2f}z⁻¹ + {section[5]:.2f}z⁻²"
+            
+            ax.text(
+                x_offset + i*spacing + width/2,
+                0.5,
+                f"${z_term}\over{denominator}$",
+                ha='center',
+                va='center',
+                color='white',
+                fontsize=8
+            )
+            
+            # Connection arrows
+            if i < len(coeffs) - 1:
+                ax.arrow(
+                    x_offset + i*spacing + width,
+                    0.5,
+                    spacing - width,
+                    0,
+                    head_width=0.02,
+                    color='white'
+                )
+        
+        # Input/Output arrows and labels
+        ax.arrow(0, 0.5, x_offset-0.05, 0, head_width=0.02, color='white')
+        ax.arrow(x_offset + len(coeffs)*spacing, 0.5, 0.1, 0, head_width=0.02, color='white')
+        
+        ax.text(-0.05, 0.5, "x[n]", ha='right', va='center', color='white',
+                bbox=dict(boxstyle="round", facecolor=ACCENT_COLOR))
+        ax.text(x_offset + len(coeffs)*spacing + 0.15, 0.5, "y[n]", 
+                ha='left', va='center', color='white',
+                bbox=dict(boxstyle="round", facecolor=ACCENT_COLOR))
+        
+        ax.set_xlim(-0.1, x_offset + len(coeffs)*spacing + 0.2)
+        ax.set_ylim(0, 1)
 
     def generate_cascade_form(self):
         """Convert zeros and poles to cascade form coefficients"""
@@ -1441,10 +1597,10 @@ class FilterDesignApp(QMainWindow):
                 background-color: {DARK_SECONDARY};
                 color: {TEXT_COLOR};
                 border: 1px solid {ACCENT_COLOR};
-                font-size: 18px;
             }}
         """)
-        
+        self.all_pass_list.itemChanged.connect(self.update_frequency_response)
+        self.all_pass_enabled.stateChanged.connect(self.update_frequency_response)
         # Add default filters to list
         for name in self.all_pass_library.get_filter_names():
             item = QListWidgetItem(name)
@@ -1471,7 +1627,6 @@ class FilterDesignApp(QMainWindow):
                 color: {TEXT_COLOR};
                 border: 1px solid {ACCENT_COLOR};
                 padding: 5px;
-                font-size: 14px;
             }}
             QPushButton:hover {{
                 background-color: {ACCENT_COLOR};
@@ -1481,31 +1636,27 @@ class FilterDesignApp(QMainWindow):
         
         custom_layout.addWidget(self.a_input)
         custom_layout.addWidget(add_btn)
-
-        # Implementation Group
-        impl_group = QGroupBox("Implementation")
-        impl_layout = QVBoxLayout()
-        impl_layout.addWidget(self.direct_form)
-        impl_layout.addWidget(self.cascade_form)
-        impl_layout.addWidget(self.export)
-        impl_layout.addWidget(self.code)
-        impl_group.setLayout(impl_layout)
         
         # Add widgets to layout
         layout.addWidget(self.all_pass_enabled)
         layout.addWidget(self.all_pass_list)
         layout.addLayout(custom_layout)
-        layout.addWidget(impl_group)
         
         panel.setLayout(layout)
         return panel
+    
+    def on_all_pass_changed(self, item):
+        """Handle all-pass filter enable/disable"""
+        if self.all_pass_enabled.isChecked():
+            self.update_frequency_response()
+
 
     def on_all_pass_enabled(self, state):
         """Handle enabling/disabling all-pass filters"""
         self.all_pass_list.setEnabled(state == Qt.Checked)
         self.a_input.setEnabled(state == Qt.Checked)
-        if state == Qt.Checked:
-            self.process_signal()  # Update signal with filters
+        # Update frequency response when enabling/disabling
+        self.update_frequency_response()
 
     def add_custom_filter(self):
         """Add custom all-pass filter from input"""
@@ -1518,6 +1669,9 @@ class FilterDesignApp(QMainWindow):
                 item.setCheckState(Qt.Unchecked)
                 self.all_pass_list.addItem(item)
                 self.a_input.clear()
+                # Update frequency response when adding filter
+                if self.all_pass_enabled.isChecked():
+                    self.update_frequency_response()
             else:
                 QMessageBox.warning(self, "Invalid Input", 
                                 "Coefficient must be between 0 and 1")
@@ -1529,18 +1683,6 @@ class FilterDesignApp(QMainWindow):
         """Setup real-time signal processing panel"""
         panel = QGroupBox("Real-time Processing")
         layout = QVBoxLayout()
-
-        mode_layout = QHBoxLayout()
-        self.draw_mode_cb = QCheckBox("Drawing Mode")
-        self.file_mode_cb = QCheckBox("File Mode")
-        self.draw_mode_cb.setChecked(True)
-        # Connect signals
-        self.draw_mode_cb.toggled.connect(lambda state: self.switch_mode('draw', state))
-        self.file_mode_cb.toggled.connect(lambda state: self.switch_mode('file', state))
-        
-        mode_layout.addWidget(self.draw_mode_cb)
-        mode_layout.addWidget(self.file_mode_cb)
-        layout.addLayout(mode_layout)
 
         # Speed control with finer granularity
         speed_layout = QHBoxLayout()
@@ -1566,7 +1708,7 @@ class FilterDesignApp(QMainWindow):
 
         # Drawing area with coordinate display
         self.draw_area = QWidget()
-        self.draw_area.setMinimumSize(300, 250)
+        self.draw_area.setMinimumSize(300, 100)
         self.draw_area.setStyleSheet(f"""
             QWidget {{
                 background-color: {DARK_SECONDARY};
@@ -1580,38 +1722,27 @@ class FilterDesignApp(QMainWindow):
         self.input_plot = pg.PlotWidget(title="Input Signal")
         self.output_plot = pg.PlotWidget(title="Filtered Signal") 
         
-        
-        # Configure plots with fixed range
         for plot in [self.input_plot, self.output_plot]:
             plot.setBackground(PLOT_BG)
             plot.showGrid(x=True, y=True)
             plot.setLabel('bottom', "Time (s)")
             plot.setLabel('left', "Amplitude")
             plot.setYRange(-1.1, 1.1)
-            plot.getViewBox().disableAutoRange(axis='x')  # Disable x auto-range
-            plot.setXRange(0, 100)  # Set fixed x-range
         
-        # Add curves with continuous plotting
+        # Link X and Y axes between plots
+        self.output_plot.setXLink(self.input_plot)
+        self.output_plot.setYLink(self.input_plot)
+        
+        # Enable mouse interaction
+        for plot in [self.input_plot, self.output_plot]:
+            plot.getViewBox().enableAutoRange(axis='x')
+            plot.getViewBox().enableAutoRange(axis='y')
+            plot.getViewBox().setMouseMode(pg.ViewBox.RectMode)
+            
+        # Add curves with synchronized updates
         self.input_curve = self.input_plot.plot(pen='y')
         self.output_curve = self.output_plot.plot(pen='c')
-
-        # Browse button (initially disabled)
-        self.browse_btn = QPushButton("Browse Signal")
-        self.browse_btn.clicked.connect(self.browse_signal_file)
-        self.browse_btn.setEnabled(False)
-        self.browse_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {DARK_SECONDARY};
-                color: {TEXT_COLOR};
-                border: 1px solid {ACCENT_COLOR};
-                padding: 5px;
-            }}
-            QPushButton:hover {{
-                background-color: {ACCENT_COLOR};
-            }}
-        """)
-        layout.addWidget(self.browse_btn)
-
+        
         # Add widgets to layout
         layout.addLayout(speed_layout)
         layout.addLayout(window_layout)
@@ -1619,217 +1750,8 @@ class FilterDesignApp(QMainWindow):
         layout.addWidget(self.input_plot)
         layout.addWidget(self.output_plot)
         
-        # Link X axes of both plots
-        self.output_plot.setXLink(self.input_plot)
-
-        # Add synchronization button
-        sync_btn = QPushButton("Sync Y-Axes")
-        sync_btn.clicked.connect(self.sync_y_axes)
-        sync_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {DARK_SECONDARY};
-                color: {TEXT_COLOR};
-                border: 1px solid {ACCENT_COLOR};
-                padding: 5px;
-            }}
-            QPushButton:hover {{
-                background-color: {ACCENT_COLOR};
-            }}
-        """)
-
-
         panel.setLayout(layout)
         return panel
-    
-    def switch_mode(self, mode, state):
-        """Handle mode switching"""
-        if not state:  # Ignore deselection events
-            return
-            
-        if mode == 'draw':
-            self.file_mode_cb.setChecked(False)
-            self.browse_btn.setEnabled(False)
-            self.draw_area.setEnabled(True)
-            self.is_drawing = True
-            self.last_x = None
-        else:  # file mode
-            self.draw_mode_cb.setChecked(False)
-            self.file_mode_cb.setChecked(True)
-            self.browse_btn.setEnabled(True)
-            self.draw_area.setEnabled(False)
-            self.is_drawing = False
-        
-        # Clear data
-        self.input_plot.clear()
-        self.output_plot.clear()
-        self.input_signal = deque(maxlen=10000)
-        self.output_signal = deque(maxlen=10000)
-        self.update_signal_plots()
-
-    def sync_y_axes(self):
-        """Synchronize Y axes ranges between input and output plots"""
-        # Get current ranges
-        input_range = self.input_plot.getViewBox().viewRange()[1]
-        output_range = self.output_plot.getViewBox().viewRange()[1]
-        
-        # Use the wider range of the two
-        y_min = min(input_range[0], output_range[0])
-        y_max = max(input_range[1], output_range[1])
-        
-        # Set both plots to the same range
-        self.input_plot.setYRange(y_min, y_max)
-        self.output_plot.setYRange(y_min, y_max)
-
-    def browse_signal_file(self):
-        """Handle signal file browsing"""
-        try:
-            filename, _ = QFileDialog.getOpenFileName(
-                self,
-                "Open Signal File",
-                "",
-                "CSV Files (*.csv);;All Files (*)"
-            )
-            
-            if filename:
-                # Read CSV data with pandas
-                df = pd.read_csv(filename)
-                
-                # Extract time and signal columns
-                time = df['Time'].values
-                signal = df['Signal'].values
-                
-                # Clear existing signals
-                self.input_signal.clear()
-                self.output_signal.clear()
-                
-                # Add data points
-                self.signal_data = signal  # Use signal data for filtering
-                self.time = time
-
-                # Plot time vs. signal
-                self.input_plot.clear()
-                self.input_plot.plot(time, signal, pen='y')
-                self.input_plot.setXRange(0, 1)
-                self.input_plot.setYRange(min(signal) - 1, max(signal) + 1)
-                self.input_plot.setLimits(xMin=0, xMax=time[-1], yMin= min(signal) - 1, yMax= max(signal) + 1)
-                
-                # Apply filter to the loaded signal
-                self.apply_filter()
-                
-        except Exception as e:
-            QMessageBox.warning(self, "Error", 
-                f"Failed to load file {filename}:\n{str(e)}")
-
-    def apply_filter(self):
-        """Apply selected filter to the loaded signal data"""
-        if self.signal_data is None:
-            return
-            
-        fs = 1000  # Sampling frequency
-        order = 4  # Fixed filter order
-        cutoff = 100  # Fixed cutoff frequency
-        nyquist = fs / 2
-        
-        filter_name = self.filter_combo.currentText()
-        
-        try:
-            if not self.all_pass_enabled.isChecked():
-                print("No all-pass filters enabled")
-                filtered_signal = self.signal_data
-                time = self.time
-                self.output_plot.plot(self.time ,self.signal_data)
-                self.output_plot.setXRange(0, 1)
-                self.output_plot.setLimits(xMin=0, xMax=time[-1], yMin= min(filtered_signal) - 1, yMax= max(filtered_signal) + 1)
-                self.output_plot.setTitle(f"Filtered Signal ({filter_name})")
-                self.output_plot.setYRange(min(filtered_signal) - 1, max(filtered_signal) + 1)
-            else:
-                if "Butterworth" in filter_name:
-                    if "Lowpass" in filter_name:
-                        b, a = signal.butter(order, cutoff / nyquist, 'low')
-                    elif "Highpass" in filter_name:
-                        b, a = signal.butter(order, cutoff / nyquist, 'high')
-                    else:  # Bandpass
-                        b, a = signal.butter(order, [cutoff / nyquist, (cutoff + 100) / nyquist], 'band')
-                        
-                elif "Chebyshev I" in filter_name:
-                    rp = 3  # ripple in passband
-                    if "Lowpass" in filter_name:
-                        b, a = signal.cheby1(order, rp, cutoff / nyquist, 'low')
-                    elif "Highpass" in filter_name:
-                        b, a = signal.cheby1(order, rp, cutoff / nyquist, 'high')
-                    else:  # Bandpass
-                        b, a = signal.cheby1(order, rp, [cutoff / nyquist, (cutoff + 100) / nyquist], 'band')
-                        
-                elif "Chebyshev II" in filter_name:
-                    rs = 40  
-                    if "Lowpass" in filter_name:
-                        b, a = signal.cheby2(order, rs, cutoff / nyquist, 'low')
-                    elif "Highpass" in filter_name:
-                        b, a = signal.cheby2(order, rs, cutoff / nyquist, 'high')
-                    else:  # Bandpass
-                        b, a = signal.cheby2(order, rs, [cutoff / nyquist, (cutoff + 100) / nyquist], 'band')
-                        
-                elif "Bessel" in filter_name:
-                    if "Lowpass" in filter_name:
-                        b, a = signal.bessel(order, cutoff / nyquist, 'low')
-                    else:  # Highpass
-                        b, a = signal.bessel(order, cutoff / nyquist, 'high')
-                        
-                elif "Elliptic" in filter_name:
-                    rp, rs = 3, 40  # ripple and attenuation
-                    if "Lowpass" in filter_name:
-                        b, a = signal.ellip(order, rp, rs, cutoff / nyquist, 'low')
-                    elif "Highpass" in filter_name:
-                        b, a = signal.ellip(order, rp, rs, cutoff / nyquist, 'high')
-                    else:  # Bandpass
-                        b, a = signal.ellip(order, rp, rs, [cutoff / nyquist, (cutoff + 100) / nyquist], 'band')
-                
-                filtered_signal = signal.filtfilt(b, a, self.signal_data)
-                
-                # Plot filtered signal
-                self.output_plot.clear()
-                time = np.arange(len(filtered_signal)) / fs
-                
-                self.output_plot.plot(time, filtered_signal, pen='r')
-                self.output_plot.setXRange(0, 1)
-                self.output_plot.setLimits(xMin=0, xMax=time[-1], yMin= min(self.signal_data) - 1, yMax= max(self.signal_data) + 1)
-                self.output_plot.setTitle(f"Filtered Signal ({filter_name})")
-            
-        except Exception as e:
-            QMessageBox.warning(self, "Error", f"Failed to apply filter:\n{str(e)}")
-
-
-    def update_signal_plots(self):
-        """Update plots with synchronized buffers"""
-        if not self.input_signal:
-            return
-            
-        try:
-            # Get buffer lengths
-            input_len = len(self.input_signal)
-            output_len = len(self.output_signal)
-            
-            # Synchronize buffer lengths
-            if input_len != output_len:
-                # Trim to shorter length
-                min_len = min(input_len, output_len)
-                input_data = list(self.input_signal)[-min_len:]
-                output_data = list(self.output_signal)[-min_len:]
-            else:
-                input_data = list(self.input_signal)
-                output_data = list(self.output_signal)
-                
-            # Create time axis
-            dt = 1.0 / self.processing_speed
-            t = np.arange(len(input_data)) * dt
-            
-            # Update plots with synchronized data
-            self.input_curve.setData(t, input_data)
-            self.output_curve.setData(t, output_data)
-            
-        except Exception as e:
-            print(f"Error updating plots: {e}")
-
 
     def change_signal_type(self, signal_type):
         """Change input signal generation method"""
@@ -1883,42 +1805,33 @@ class FilterDesignApp(QMainWindow):
         self.reset_signal_buffers()
 
     def handle_mouse_draw(self, event):
-        """Handle mouse drawing states"""
-        if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
-            self.is_drawing = True
-            self.last_x = event.x()  # Initialize on press
-            self.current_y = 0
-            return True
-                
-        elif event.type() == QEvent.MouseMove and self.is_drawing:
-            if self.last_x is None:  # Safety check
-                self.last_x = event.x()
-                return True
-                
-            try:
-                dx = event.x() - self.last_x
-                sensitivity = 0.01
-                self.current_y += dx * sensitivity
-                self.current_y = max(-1, min(1, self.current_y))
-                
-                if len(self.input_signal) < self.input_signal.maxlen:
-                    self.input_signal.append(self.current_y)
-                else:
-                    self.input_signal.popleft()
-                    self.input_signal.append(self.current_y)
-                    
-                self.last_x = event.x()
-            except TypeError:
-                self.last_x = event.x()  # Reset on error
-                
-            return True
-                
-        elif event.type() == QEvent.MouseButtonRelease:
-            self.is_drawing = False
-            self.last_x = None  # Reset on release
-            return True
-                
-        return False
+        """Generate input signal from mouse movement"""
+        if not hasattr(self, 'last_pos'):
+            self.last_pos = event.pos()
+            self.last_time = time.time()
+            return
+            
+        # Calculate mouse velocity 
+        dt = time.time() - self.last_time
+        dx = event.pos().x() - self.last_pos.x()
+        dy = event.pos().y() - self.last_pos.y()
+        velocity = np.sqrt(dx*dx + dy*dy) / dt
+        
+        # Generate signal based on y position
+        y = 1.0 - (2.0 * event.pos().y() / self.draw_area.height())
+        
+        # Add frequency component based on velocity
+        if velocity > 0:
+            freq = min(20, velocity / 100)  # Cap max frequency
+            y *= np.sin(2 * np.pi * freq * dt)
+        
+        self.input_signal.append(float(y))
+        
+        # Update state
+        self.last_pos = event.pos()
+        self.last_time = time.time()
+        
+        self.process_next_sample()
     
     def process_all_pass(self, x):
         """Apply enabled all-pass filters to input sample"""
@@ -1942,45 +1855,24 @@ class FilterDesignApp(QMainWindow):
         self.update_signal_plots()
 
 
-    #z-plane
-
-    def update_zoom(self):
-        """Update z-plane zoom level based on slider value"""
-        zoom_factor = self.zoom_slider.value() / 100.0  # Convert to multiplier (1.0 - 4.0)
-        
-        # Update axis limits maintaining center and aspect ratio
-        limit = 2.0 * (4.0 / zoom_factor)  # Scale limits inversely with zoom
-        self.z_ax.set_xlim(-limit, limit)
-        self.z_ax.set_ylim(-limit, limit)
-        
-        # Redraw with new limits
-        self.z_plane_canvas.draw()
-
-
 class AllPassFilter:
     def __init__(self, a):
-        self.a = float(a)  # Ensure float
-        self.zero = 1/self.a  # Reciprocal for all-pass
-        self.pole = self.a
-        self.state = 0.0  # Single state variable
-        
+        self.a = float(a)  # Coefficient
+        self.zero = 1/self.a  # Reciprocal location (outside unit circle)
+        self.pole = self.a   # Inside unit circle
+        self.state = 0.0
         
     def process(self, x):
         """Process one sample through all-pass filter"""
         try:
             # Direct Form I implementation
-            w = float(x) - self.pole * self.state
+            w = x - self.pole * self.state
             y = self.zero * w + self.state
             self.state = w  # Update state
             return y
         except Exception as e:
             print(f"Error in filter: {e}")
             return x
-        
-    def get_phase_response(self, w):
-        z = np.exp(1j * w)
-        H = (z - self.zero)/(1 - self.pole*z)
-        return np.angle(H)
 
 class AllPassLibrary:
     def __init__(self):
@@ -2010,16 +1902,9 @@ class AllPassLibrary:
             return True
         return False
 
-    
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    
-    # Set default font size
-    font = QFont()
-    font.setPointSize(BASE_FONT_SIZE)
-    app.setFont(font)
-    
     window = FilterDesignApp()
     window.show()
     sys.exit(app.exec_())
