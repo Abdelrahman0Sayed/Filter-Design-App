@@ -1513,14 +1513,14 @@ class FilterDesignApp(QMainWindow):
             )
             ax.add_patch(rect)
             
-            # Add transfer function
-            z_term = f"1 + {section[1]:.2f}z⁻¹ + {section[2]:.2f}z⁻²"
-            denominator = f"1 + {section[4]:.2f}z⁻¹ + {section[5]:.2f}z⁻²"
+            # Fix transfer function formatting
+            num = f"{section[0]:.2f} + {section[1]:.2f}z^{{-1}} + {section[2]:.2f}z^{{-2}}"
+            den = f"{1:.2f} + {section[4]:.2f}z^{{-1}} + {section[5]:.2f}z^{{-2}}"
             
             ax.text(
                 x_offset + i*spacing + width/2,
                 0.5,
-                f"${z_term}\over{denominator}$",
+                f"$\\frac{{{num}}}{{{den}}}$",  # Proper LaTeX fraction
                 ha='center',
                 va='center',
                 color='white',
@@ -1538,7 +1538,7 @@ class FilterDesignApp(QMainWindow):
                     color='white'
                 )
         
-        # Input/Output arrows and labels
+        # Input/Output arrows and labels 
         ax.arrow(0, 0.5, x_offset-0.05, 0, head_width=0.02, color='white')
         ax.arrow(x_offset + len(coeffs)*spacing, 0.5, 0.1, 0, head_width=0.02, color='white')
         
