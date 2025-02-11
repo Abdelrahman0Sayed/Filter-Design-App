@@ -766,40 +766,51 @@ class FilterDesignApp(QMainWindow):
             self.coord_label.setText(f'x={event.xdata:.2f}, y={event.ydata:.2f}')
             
     def save_filter(self):
-        """Save filter coefficients to .flt file"""
+        """Save filter coefficients to JSON file"""
         filename, _ = QFileDialog.getSaveFileName(
             self, 
             "Save Filter", 
             "", 
-            "Filter Files (*.flt)"  # Remove All Files option to enforce .flt
+            "Filter Files (*.flt)"
         )
         
         if filename:
-            # Add .flt extension if not present
             if not filename.endswith('.flt'):
                 filename += '.flt'
                 
+            # Convert complex numbers to [real, imag] pairs for JSON
             data = {
-                'zeros': self.zeros,
-                'poles': self.poles
+                'zeros': [[z.real, z.imag] for z in self.zeros],
+                'poles': [[p.real, p.imag] for p in self.poles]
             }
             
-            # Use json to save as plain text instead of numpy binary
             with open(filename, 'w') as f:
-                json.dump({
-                    'zeros': [(z.real, z.imag) for z in self.zeros],
-                    'poles': [(p.real, p.imag) for p in self.poles]
-                }, f, indent=2)
-            
+                json.dump(data, f, indent=2)
+
     def load_filter(self):
+        """Load filter coefficients from JSON file"""
         filename, _ = QFileDialog.getOpenFileName(
-            self, "Load Filter", "", "Filter Files (*.flt);;All Files (*)"
+            self, 
+            "Load Filter", 
+            "", 
+            "Filter Files (*.flt);;All Files (*)"
         )
+        
         if filename:
-            data = np.load(filename, allow_pickle=True).item()
-            self.zeros = data['zeros']
-            self.poles = data['poles']
-            self.update_plots()
+            try:
+                with open(filename, 'r') as f:
+                    data = json.load(f)
+                    
+                # Convert [real, imag] pairs back to complex numbers
+                self.zeros = [complex(z[0], z[1]) for z in data['zeros']]
+                self.poles = [complex(p[0], p[1]) for p in data['poles']]
+                
+                self.add_to_history()
+                self.update_plots()
+                
+            except Exception as e:
+                QMessageBox.warning(self, "Load Error", 
+                                f"Error loading filter file: {str(e)}")
             
     def undo(self):
         if self.history_index > 0:
@@ -880,8 +891,7 @@ class FilterDesignApp(QMainWindow):
                 self.add_new_point(x, y)
 
     def add_new_point(self, x, y):
-        """Add new point with stability check"""
-        # Check if adding pole would make filter unstable
+        """Add new point with conjugate pair tracking"""
         if self.current_mode == 'pole':
             radius = np.sqrt(x*x + y*y)
             if radius >= 1.0:
@@ -889,28 +899,26 @@ class FilterDesignApp(QMainWindow):
                                 "Poles must be inside the unit circle")
                 return
                 
-        if self.current_mode == 'zero':
-            idx = len(self.zeros)
-            self.zeros.append(complex(x, y))
-            if self.conjugate_check.isChecked():
-                conj_idx = len(self.zeros)
-                self.zeros.append(complex(x, -y))
-                self.conjugate_pairs['zeros'][idx] = conj_idx
-                self.conjugate_pairs['zeros'][conj_idx] = idx
-        else:  # pole mode
-            idx = len(self.poles)
-            self.poles.append(complex(x, y))
-            if self.conjugate_check.isChecked():
-                conj_idx = len(self.poles)
-                self.poles.append(complex(x, -y))
-                self.conjugate_pairs['poles'][idx] = conj_idx
-                self.conjugate_pairs['poles'][conj_idx] = idx
+        points = self.zeros if self.current_mode == 'zero' else self.poles
+        pairs_dict = self.conjugate_pairs['zeros' if self.current_mode == 'zero' else 'poles']
+        
+        # Add main point
+        idx = len(points)
+        points.append(complex(x, y))
+        
+        # Add conjugate if enabled
+        if self.conjugate_check.isChecked():
+            conj_idx = len(points)
+            points.append(complex(x, -y))
+            # Store bidirectional reference
+            pairs_dict[idx] = conj_idx
+            pairs_dict[conj_idx] = idx
         
         self.add_to_history()
         self.update_plots()
 
     def on_motion(self, event):
-        """Handle dragging with stability check"""
+        """Handle dragging with conjugate pair movement"""
         if not self.dragging or event.inaxes != self.z_ax:
             return
                 
@@ -918,22 +926,23 @@ class FilterDesignApp(QMainWindow):
         if x is None or y is None:
             return
                 
-        # Check stability when dragging poles
+        # Check stability for poles
         if self.drag_type == 'pole':
             radius = np.sqrt(x*x + y*y)
             if radius >= 1.0:
                 return
                 
+        # Get active arrays
         points = self.zeros if self.drag_type == 'zero' else self.poles
-        pairs = self.conjugate_pairs['zeros' if self.drag_type == 'zero' else 'poles']
+        pairs_dict = self.conjugate_pairs['zeros' if self.drag_type == 'zero' else 'poles']
         
-        # Update dragged point
+        # Update main point
         points[self.drag_target] = complex(x, y)
         
-        # Update conjugate if exists
-        if self.conjugate_check.isChecked() and self.drag_target in pairs:
-            conj_idx = pairs[self.drag_target]
-            points[conj_idx] = complex(x, -y)
+        # Update conjugate if it exists
+        if self.drag_target in pairs_dict:
+            conj_idx = pairs_dict[self.drag_target]
+            points[conj_idx] = complex(x, -y)  # Mirror y-coordinate only
         
         self.update_plots()
 
@@ -1856,6 +1865,20 @@ class FilterDesignApp(QMainWindow):
 
 
 class AllPassFilter:
+    """
+    All-pass filter implementation with unity magnitude response.
+    
+    Properties:
+    - Magnitude response = 1 at all frequencies
+    - Phase response varies with frequency
+    - Used for phase correction without affecting magnitude
+    
+    Attributes:
+        a (float): Filter coefficient (0 < a < 1)
+        zero (float): Zero location (outside unit circle)
+        pole (float): Pole location (inside unit circle)
+        state (float): Filter state for real-time processing
+    """
     def __init__(self, a):
         self.a = float(a)  # Coefficient
         self.zero = 1/self.a  # Reciprocal location (outside unit circle)
@@ -1875,6 +1898,22 @@ class AllPassFilter:
             return x
 
 class AllPassLibrary:
+    """
+    Library of common all-pass filter configurations.
+    
+    Features:
+    - Predefined coefficients for common phase corrections
+    - Dynamic addition of custom filters
+    - Named filter access
+    
+    Default coefficients:
+    - 0.5: 90° phase shift at π/3
+    - 0.7: 90° phase shift at π/2
+    - 0.9: 90° phase shift at 2π/3
+    - 0.95: Sharper phase transition
+    - 0.98: Very sharp phase transition
+    """
+
     def __init__(self):
         self.filters = []
         self.initialize_library()
